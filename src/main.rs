@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env::var, fs, io::BufRead, process::Command};
+use std::{collections::HashMap, env::var, fs, io::BufRead, process::Command, str::from_utf8};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -177,11 +177,7 @@ fn create_worktree(values: RepoConfig, branch_name: String, dry_run: bool) -> Re
     // Create worktree
     let worktree_path;
     if !values.inactive_trees.is_empty() {
-        worktree_path = format!(
-            "{}/{}",
-            values.base_path,
-            values.inactive_trees.first().unwrap()
-        );
+        worktree_path = values.inactive_trees.first().unwrap().clone();
     } else {
         let worktree_name = format!(
             "tree{}",
@@ -221,6 +217,9 @@ fn list_worktrees(values: RepoConfig) -> Result<()> {
 
     for line in output.stdout.lines() {
         let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
+        if values.inactive_trees.contains(&items[0].to_string()) {
+            continue;
+        }
         table.add_row([items[0], items[2]]);
     }
     println!("{}", table);
@@ -233,28 +232,37 @@ fn delete_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -
         .arg("worktree")
         .arg("list")
         .current_dir(format!("{}/{}", values.base_path, values.base_tree));
-    let output = worktree_cmd
-        .output()?
-        .stdout
-        .iter()
+    let output = worktree_cmd.output()?;
+    let result = from_utf8(&output.stdout)?
+        .lines()
         .find(|&line| line.to_string().contains(&branch_name))
         .map(|line| line.to_string());
-    if output.is_none() {
+    if result.is_none() {
         println!("Worktree {} does not exist", branch_name);
         return Ok(());
     }
-    let worktree_path = output.unwrap().split_whitespace().collect::<Vec<&str>>()[0].to_string();
+    let worktree_path = result.unwrap().split_whitespace().collect::<Vec<&str>>()[0].to_string();
+    let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
+    if config
+        .repo
+        .get(&config.active_repo)
+        .unwrap()
+        .inactive_trees
+        .contains(&worktree_path)
+    {
+        println!("Worktree {} is already inactive", branch_name);
+        return Ok(());
+    }
 
     if dry_run {
         println!("Would archive worktree {}", &worktree_path);
+        return Ok(());
     }
 
     // Get config from file
-    let config_file = fs::File::open(CONFIG_FILE())?;
-    let mut config: Config = serde_json::from_reader(&config_file)?;
-    values.inactive_trees.push(branch_name);
+    values.inactive_trees.push(worktree_path);
     config.repo.insert(config.active_repo.clone(), values);
-    serde_json::to_writer_pretty(&config_file, &config)?;
+    fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
 
     Ok(())
 }
