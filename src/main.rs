@@ -153,7 +153,7 @@ fn get_values_from_config_file(repo: &Option<String>) -> Result<RepoConfig> {
     }
 }
 
-fn create_worktree(values: RepoConfig, branch_name: String, dry_run: bool) -> Result<()> {
+fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -> Result<()> {
     let mut pull_cmd = Command::new("git");
     pull_cmd
         .current_dir(format!("{}/{}", values.base_path, values.base_tree))
@@ -200,6 +200,13 @@ fn create_worktree(values: RepoConfig, branch_name: String, dry_run: bool) -> Re
         println!("Would run command {:?}", worktree_cmd);
     } else {
         worktree_cmd.status()?;
+
+        if values.inactive_trees.contains(&worktree_path) {
+            values.inactive_trees.remove(0);
+            let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
+            config.repo.insert(config.active_repo.clone(), values);
+            fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
+        }
     };
 
     Ok(())
