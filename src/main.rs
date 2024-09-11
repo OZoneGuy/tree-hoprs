@@ -41,7 +41,10 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum TreeCommand {
     /// List all the worktrees
-    List,
+    List {
+        #[arg(short, long)]
+        raw: bool,
+    },
     /// Create a new worktree
     Create { branch_name: String },
     /// Archive a worktree
@@ -97,10 +100,7 @@ fn main() -> Result<()> {
     };
 
     match args.command {
-        TreeCommand::List => {
-            println!("Listing worktrees");
-            list_worktrees(values)
-        }
+        TreeCommand::List { raw } => list_worktrees(values, raw),
         TreeCommand::Create { branch_name: name } => {
             println!("Creating worktree {}", name);
             create_worktree(values, name, args.dry_run)
@@ -212,24 +212,34 @@ fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -
     Ok(())
 }
 
-fn list_worktrees(values: RepoConfig) -> Result<()> {
+fn list_worktrees(values: RepoConfig, raw: bool) -> Result<()> {
     let mut cmd = Command::new("git");
     cmd.arg("worktree")
         .arg("list")
         .current_dir(format!("{}/{}", values.base_path, values.base_tree));
     let output = cmd.output()?;
 
-    let mut table = Table::new();
-    table.set_header(["Path", "Branch"]);
-
-    for line in output.stdout.lines() {
-        let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
-        if values.inactive_trees.contains(&items[0].to_string()) {
-            continue;
+    if raw {
+        for line in output.stdout.lines() {
+            let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
+            if values.inactive_trees.contains(&items[0].to_string()) {
+                continue;
+            }
+            println!("{}", &items[2][1..items[2].len() - 1]);
         }
-        table.add_row([items[0], items[2]]);
+    } else {
+        let mut table = Table::new();
+        table.set_header(["Path", "Branch"]);
+
+        for line in output.stdout.lines() {
+            let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
+            if values.inactive_trees.contains(&items[0].to_string()) {
+                continue;
+            }
+            table.add_row([items[0], items[2]]);
+        }
+        println!("{}", table);
     }
-    println!("{}", table);
     Ok(())
 }
 
