@@ -224,6 +224,10 @@ fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -
         }
     };
 
+    println!(
+        "Branch {} created in worktree {}",
+        &branch_name, worktree_path
+    );
     Ok(())
 }
 
