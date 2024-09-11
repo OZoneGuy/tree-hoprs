@@ -188,19 +188,34 @@ fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -
         worktree_path = format!("{}/{}", values.base_path, worktree_name);
     }
 
+    // Check if worktree already exists
     let mut worktree_cmd = Command::new("git");
-    worktree_cmd
-        .current_dir(format!("{}/{}", values.base_path, values.base_tree))
-        .arg("worktree")
-        .arg("add")
-        .arg(&worktree_path)
-        .arg(branch_name);
+    worktree_cmd.current_dir(format!("{}/{}", values.base_path, values.base_tree));
+
+    if let Ok(worktree) = fs::read_dir(&worktree_path) {
+        if worktree.count() > 0 {
+            println!(
+                "Worktree {} already exists, switching branch",
+                worktree_path
+            );
+            // Switch the branch in the existing worktree
+            worktree_cmd.current_dir(&worktree_path);
+            worktree_cmd.arg("switch").arg(&branch_name);
+        }
+    } else {
+        worktree_cmd
+            .arg("worktree")
+            .arg("add")
+            .arg(&worktree_path)
+            .arg(&branch_name);
+    }
     if dry_run {
         println!("Would create worktree {}", &worktree_path);
         println!("Would run command {:?}", worktree_cmd);
     } else {
         worktree_cmd.status()?;
 
+        // NOTE: There is a better way to do this. Could use pop or something :/
         if values.inactive_trees.contains(&worktree_path) {
             values.inactive_trees.remove(0);
             let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
