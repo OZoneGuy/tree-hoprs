@@ -49,17 +49,18 @@ enum TreeCommand {
         raw: bool,
     },
     /// Create a new worktree
-    Create { branch_name: String },
+    Create {
+        branch_name: String,
+    },
     /// Archive a worktree
-    Delete { branch_name: String },
+    Delete {
+        branch_name: String,
+    },
     /// Update a worktree
     Update,
     /// Set a config value
-    Set {
-        #[arg(short = 'k', long)]
-        key_path: String,
-        #[arg(short = 'v', long)]
-        value: String,
+    SetRepo {
+        repo_name: String,
     },
     /// Add a new repository
     #[command(name = "add-repo")]
@@ -68,8 +69,11 @@ enum TreeCommand {
         base_tree: String,
         base_path: String,
     },
+    GetRepos,
     /// Delete a repository
-    DeleteRepo { repo_name: String },
+    DeleteRepo {
+        repo_name: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -132,9 +136,9 @@ fn main() -> Result<()> {
             println!("Updating base worktree");
             update_main_worktree(values, args.dry_run)
         }
-        TreeCommand::Set { key_path, value } => {
+        TreeCommand::SetRepo { repo_name } => {
             println!("Setting config value");
-            set_config_value(key_path, value)
+            set_active_repo(repo_name)
         }
         TreeCommand::AddRepo {
             repo_name,
@@ -148,46 +152,29 @@ fn main() -> Result<()> {
             println!("Deleting repository");
             delete_repo(repo_name)
         }
+        TreeCommand::GetRepos => get_repos(),
     }
+}
+
+fn set_active_repo(repo_name: String) -> std::result::Result<(), anyhow::Error> {
+    let mut config = get_config_file()?;
+    config.active_repo = repo_name;
+    fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
+    Ok(())
+}
+
+fn get_repos() -> std::result::Result<(), anyhow::Error> {
+    let config = get_config_file()?;
+    for (repo_name, _) in config.repo.iter() {
+        println!("{}", repo_name);
+    }
+    Ok(())
 }
 
 fn get_config_file() -> Result<Config> {
     let config_file = fs::File::open(CONFIG_FILE())?;
     let config: Config = serde_json::from_reader(config_file)?;
     return Ok(config);
-}
-
-fn set_config_value(key_path: String, value: String) -> Result<()> {
-    let mut config = get_config_file()?;
-    if key_path == "active_repository" {
-        config.active_repo = value;
-    } else {
-        let path = key_path.split('.').collect::<Vec<&str>>();
-        if path.len() != 2 {
-            return Err(anyhow!(
-                "Invalid key path. Valid paths are <repo>.[base_tree|base_path]"
-            ));
-        }
-        match path[1] {
-            "base_tree" => {
-                config
-                    .repo
-                    .get_mut(path[0])
-                    .ok_or(anyhow!("Repository not found"))?
-                    .base_tree = value;
-            }
-            "base_path" => {
-                config
-                    .repo
-                    .get_mut(path[0])
-                    .ok_or(anyhow!("Repository not found"))?
-                    .base_path = value;
-            }
-            _ => return Err(anyhow!("Invalid key path")),
-        }
-    }
-    fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
-    Ok(())
 }
 
 fn add_repo(repo_name: String, base_tree: String, base_path: String) -> Result<()> {
