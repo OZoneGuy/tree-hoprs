@@ -1,4 +1,14 @@
-use std::{collections::HashMap, env::var, fs, io::BufRead, process::Command, str::from_utf8};
+use std::{
+    collections::HashMap,
+    env::var,
+    fs::{self, copy},
+    io::BufRead,
+    path,
+    process::Command,
+    str::from_utf8,
+};
+
+use path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
@@ -74,13 +84,19 @@ enum TreeCommand {
     DeleteRepo {
         repo_name: String,
     },
+    #[command(name = "add-file")]
+    AddFile {
+        file_path: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 struct RepoConfig {
+    repo_name: String,
     base_tree: String,
     base_path: String,
     inactive_trees: Vec<String>,
+    copy_files: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -99,9 +115,11 @@ fn main() -> Result<()> {
 
     // Used across the program to pass the configuration
     let mut values = RepoConfig {
+        repo_name: args.repo.clone().unwrap_or(String::new()),
         base_tree: args.base_branch.unwrap_or(String::new()),
         base_path: args.base_path.unwrap_or(String::new()),
         inactive_trees: Vec::new(),
+        copy_files: Vec::new(),
     };
 
     // Check if optional values are passed
@@ -153,6 +171,7 @@ fn main() -> Result<()> {
             delete_repo(repo_name)
         }
         TreeCommand::GetRepos => get_repos(),
+        TreeCommand::AddFile { file_path } => add_file(values, &file_path),
     }
 }
 
@@ -185,9 +204,11 @@ fn add_repo(repo_name: String, base_tree: String, base_path: String) -> Result<(
     config.repo.insert(
         repo_name.clone(),
         RepoConfig {
+            repo_name: repo_name.clone(),
             base_tree,
             base_path,
             inactive_trees: Vec::new(),
+            copy_files: Vec::new(),
         },
     );
     fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
@@ -310,10 +331,31 @@ fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -
         if values.inactive_trees.contains(&worktree_path) {
             values.inactive_trees.remove(0);
             let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
-            config.repo.insert(config.active_repo.clone(), values);
+            config
+                .repo
+                .insert(config.active_repo.clone(), values.clone());
             fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
         }
     };
+
+    // Copy common files from the base tree
+    for file in values.copy_files {
+        let mut from_path = PathBuf::new();
+        from_path.push(values.base_path.clone());
+        from_path.push(values.base_tree.clone());
+        from_path.push(file.clone());
+        let from = from_path
+            .to_str()
+            .ok_or(anyhow!("Failed to create from path"))?;
+        let mut to_path = PathBuf::new();
+        to_path.push(values.base_path.clone());
+        to_path.push(values.base_tree.clone());
+        to_path.push(file.clone());
+        let to = to_path
+            .to_str()
+            .ok_or(anyhow!("Failed to create from path"))?;
+        copy(from, to)?;
+    }
 
     println!(
         "Branch {} created in worktree {}",
@@ -404,5 +446,27 @@ fn update_main_worktree(values: RepoConfig, dry_run: bool) -> Result<()> {
         cmd.status()?;
     };
 
+    Ok(())
+}
+
+fn add_file(mut values: RepoConfig, file_path: &str) -> Result<()> {
+    // check that file exists
+    let mut full_path = PathBuf::new();
+    full_path.push(values.base_tree.clone());
+    full_path.push(values.base_path.clone());
+    full_path.push(file_path);
+
+    let path_string = full_path
+        .to_str()
+        .ok_or(anyhow!("Failed to create the file path"))?;
+
+    if !full_path.exists() {
+        println!("File does not exist at {}", path_string);
+        return Err(anyhow!("File does not exist"));
+    }
+    values.copy_files.push(path_string.into());
+
+    let mut config = get_config_file()?;
+    config.repo.insert(values.repo_name.clone(), values);
     Ok(())
 }
