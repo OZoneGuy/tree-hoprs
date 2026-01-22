@@ -10,7 +10,7 @@ A simple CLI tool to manage multiple git repositories.
 | Archive | Archive a worktree | ✅ |
 | Update | Update the main worktree | ✅ |
 | List | List all the worktrees | ✅ |
-| Switch between repositories | Switch between repositories | :x: |
+| Switch between repositories | Switch between repositories | ✅ |
 | Autocomplete | Autocomplete for the commands | :x: |
 | Go to worktree | Go to the worktree | :x: |
 
