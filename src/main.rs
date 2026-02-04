@@ -108,17 +108,15 @@ fn main() -> Result<()> {
 
     // Used across the program to pass the configuration
     let values: RepoConfig;
-    let repo: String;
 
     // Try to read the config file
     match get_values_from_config_file(&args.repo) {
-        Ok((r, v)) => {
+        Ok(v) => {
             values = v;
-            repo = r;
         }
         Err(_) => {
             println!("Config file not found or invalid, creating new config file");
-            (repo, values) = create_config_file(&args.repo)?;
+            values = create_config_file(&args.repo)?;
         }
     }
 
@@ -137,7 +135,7 @@ fn main() -> Result<()> {
             for name in &branch_names {
                 println!("{}", name);
             }
-            delete_worktree(&repo, values, branch_names, args.dry_run)
+            delete_worktree(values, branch_names, args.dry_run)
         }
         TreeCommand::Update => {
             println!("Updating base worktree");
@@ -217,7 +215,7 @@ fn delete_repo(repo_name: String) -> Result<()> {
     Ok(())
 }
 
-fn create_config_file(repo: &Option<String>) -> Result<(String, RepoConfig)> {
+fn create_config_file(repo: &Option<String>) -> Result<RepoConfig> {
     let base_tree = Input::new().with_prompt("Base tree name").interact_text()?;
     let base_path = Input::new()
         .with_prompt("Base repos path")
@@ -242,22 +240,16 @@ fn create_config_file(repo: &Option<String>) -> Result<(String, RepoConfig)> {
     config.repo.insert(repo_name.clone(), values.clone());
     let config_file = fs::File::create(CONFIG_FILE())?;
     serde_json::to_writer_pretty(config_file, &config)?;
-    Ok((repo_name, values))
+    Ok(values)
 }
 
-fn get_values_from_config_file(repo: &Option<String>) -> Result<(String, RepoConfig)> {
+fn get_values_from_config_file(repo: &Option<String>) -> Result<RepoConfig> {
     let config_file = fs::File::open(CONFIG_FILE())?;
     let config: Config = serde_json::from_reader(config_file)?;
     if repo.is_none() {
-        Ok((
-            config.active_repo.clone(),
-            config.repo.get(&config.active_repo).unwrap().clone(),
-        ))
+        Ok(config.repo.get(&config.active_repo).unwrap().clone())
     } else {
-        Ok((
-            repo.as_ref().unwrap().clone(),
-            config.repo.get(repo.as_ref().unwrap()).unwrap().clone(),
-        ))
+        Ok(config.repo.get(repo.as_ref().unwrap()).unwrap().clone())
     }
 }
 
@@ -390,12 +382,7 @@ fn list_worktrees(values: RepoConfig, raw: bool) -> Result<()> {
     Ok(())
 }
 
-fn delete_worktree(
-    repo: &str,
-    mut values: RepoConfig,
-    branch_names: Vec<String>,
-    dry_run: bool,
-) -> Result<()> {
+fn delete_worktree(mut values: RepoConfig, branch_names: Vec<String>, dry_run: bool) -> Result<()> {
     let mut worktree_cmd = Command::new("git");
     worktree_cmd
         .arg("worktree")
@@ -434,7 +421,7 @@ fn delete_worktree(
     }
 
     let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
-    config.repo.insert(repo.to_string(), values);
+    config.repo.insert(values.repo_name.clone(), values);
     fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
 
     Ok(())
