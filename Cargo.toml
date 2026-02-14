@@ -1,8 +1,12 @@
 [package]
 name = "tree-hoprs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Omar Alkersh <alkersh.omar@pm.me>"]
+
+[lib]
+name = "lib"
+path = "lib/mod.rs"
 
 [dependencies]
 anyhow = "1.0.86"
