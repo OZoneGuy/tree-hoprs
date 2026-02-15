@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::layout::Constraint;
-use ratatui::widgets::{StatefulWidget, Table, TableState};
+use ratatui::widgets::{BorderType, Borders, Row, StatefulWidget, Table, TableState};
 use ratatui::DefaultTerminal;
 use ratatui::{
     layout::Layout,
@@ -20,28 +20,29 @@ pub struct App {
     active_repo: usize,
     end: bool,
     repo_configs: Vec<RepoConfig>,
+    selected_row: usize,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
         match get_config_file() {
             Ok(conf) => {
-                dbg!("read config successfully");
                 let repos = conf.get_repos();
                 return Ok(Self {
                     repos: repos,
                     active_repo: 0,
                     end: false,
                     repo_configs: conf.get_repo_configs(),
+                    selected_row: 0,
                 });
             }
-            Err(e) => {
-                dbg!("reading error: {:}", e);
+            Err(_) => {
                 return Ok(Self {
                     repos: vec![],
                     active_repo: 0,
                     end: false,
                     repo_configs: vec![],
+                    selected_row: 0,
                 });
             }
         }
@@ -84,7 +85,7 @@ impl App {
 
 impl Widget for &App {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        use Constraint::{Fill, Length};
+        use Constraint::{Fill, Length, Percentage};
         let vertical = Layout::vertical([Length(3), Fill(1), Length(4)]);
         let [tabs, body, _footer] = vertical.areas(area);
         Tabs::new(self.repos.clone().into_iter())
@@ -92,8 +93,22 @@ impl Widget for &App {
             .highlight_style(Style::default().white().on_dark_gray())
             .select(self.active_repo)
             .render(tabs, buf);
-        let table: Table = todo!();
-        let mut table_state: TableState = todo!();
+        let rows: Vec<Row> = self.repo_configs[self.active_repo]
+            .list_worktrees(false)
+            .context("failed to list worktrees")
+            .unwrap()
+            .iter()
+            .map(|(path, branch)| Row::new(vec![path.to_owned(), branch.to_owned()]))
+            .collect();
+        let table = Table::new(rows, [Percentage(75), Percentage(25)])
+            .header(Row::new(vec!["Path", "Branch"]))
+            .row_highlight_style(Style::new().on_dark_gray())
+            .block(
+                Block::new()
+                    .border_type(BorderType::Rounded)
+                    .borders(Borders::ALL),
+            );
+        let mut table_state: TableState = TableState::new().with_selected(self.selected_row);
         StatefulWidget::render(table, body, buf, &mut table_state);
     }
 }
