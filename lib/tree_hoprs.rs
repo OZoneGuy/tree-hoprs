@@ -11,7 +11,6 @@ use std::{
 use path::PathBuf;
 
 use anyhow::{anyhow, Result};
-use comfy_table::Table;
 use dialoguer::Input;
 use serde::{Deserialize, Serialize};
 
@@ -24,12 +23,27 @@ pub struct RepoConfig {
     copy_files: Vec<String>,
 }
 
+impl RepoConfig {
+    pub fn get_inactive_trees(&self) -> &Vec<String> {
+        &self.inactive_trees
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     #[serde(rename = "repositories")]
     repo: HashMap<String, RepoConfig>,
     #[serde(rename = "active_repository")]
     active_repo: String,
+}
+
+impl Config {
+    pub fn get_repos(&self) -> Vec<String> {
+        self.repo.keys().map(|s| s.to_owned()).collect()
+    }
+    pub fn get_repo_configs(&self) -> Vec<RepoConfig> {
+        self.repo.values().map(|c| c.to_owned()).collect()
+    }
 }
 /// The config file path
 /// Defaults to `~/.config/tree-hoprs.json`
@@ -227,35 +241,29 @@ pub fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: boo
     Ok(())
 }
 
-pub fn list_worktrees(values: RepoConfig, raw: bool) -> Result<()> {
+// Returns the list of worktrees for a given repo
+//
+// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
+// strings. The first item is the worktree path, and the second item is the branch name.
+pub fn list_worktrees(values: RepoConfig, include_inactive: bool) -> Result<Vec<(String, String)>> {
     let mut cmd = Command::new("git");
     cmd.arg("worktree")
         .arg("list")
         .current_dir(format!("{}/{}", values.base_path, values.base_tree));
     let output = cmd.output()?;
 
-    if raw {
-        for line in output.stdout.lines() {
-            let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
-            if values.inactive_trees.contains(&items[0].to_string()) {
-                continue;
-            }
-            println!("{}", &items[2][1..items[2].len() - 1]);
+    let mut trees = Vec::new();
+    for line in output.stdout.lines() {
+        let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
+        if !include_inactive && values.inactive_trees.contains(&items[0].to_string()) {
+            continue;
         }
-    } else {
-        let mut table = Table::new();
-        table.set_header(["Path", "Branch"]);
-
-        for line in output.stdout.lines() {
-            let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
-            if values.inactive_trees.contains(&items[0].to_string()) {
-                continue;
-            }
-            table.add_row([items[0], items[2]]);
-        }
-        println!("{}", table);
+        trees.push((
+            items[0].to_owned(),
+            items[2][1..items[2].len() - 1].to_owned(),
+        ));
     }
-    Ok(())
+    Ok(trees)
 }
 
 pub fn delete_worktree(

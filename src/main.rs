@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use comfy_table::Table;
 use lib::state::App;
 use lib::tree_hoprs::*;
 
@@ -96,7 +97,24 @@ fn main() -> Result<()> {
     };
 
     match args.command.unwrap() {
-        TreeCommand::List { raw } => list_worktrees(values, raw),
+        TreeCommand::List { raw } => {
+            let worktrees = list_worktrees(values, false)?;
+            if raw {
+                for tree in worktrees {
+                    println!("{}", &tree.1);
+                }
+            } else {
+                let mut table = Table::new();
+                table.set_header(["Path", "Branch"]);
+
+                for tree in worktrees {
+                    table.add_row([tree.0, tree.1]);
+                }
+                println!("{}", table);
+            }
+
+            Ok(())
+        }
         TreeCommand::Create { branch_name: name } => {
             println!("Creating worktree {}", name);
             create_worktree(values, name, args.dry_run)
