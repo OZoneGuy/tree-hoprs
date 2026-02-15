@@ -15,36 +15,29 @@ use ratatui::{
 
 use crate::tree_hoprs::{get_config_file, RepoConfig};
 
+#[derive(Default)]
 pub struct App {
     repos: Vec<String>,
     active_repo: usize,
     end: bool,
     repo_configs: Vec<RepoConfig>,
-    selected_row: usize,
+    selected_row: i16,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
+        let mut app = Self::default();
         match get_config_file() {
             Ok(conf) => {
                 let repos = conf.get_repos();
-                return Ok(Self {
-                    repos: repos,
-                    active_repo: 0,
-                    end: false,
-                    repo_configs: conf.get_repo_configs(),
-                    selected_row: 0,
-                });
+                app.repos = repos;
+                app.active_repo = 0;
+                app.end = false;
+                app.repo_configs = conf.get_repo_configs();
+                app.selected_row = 0;
+                return Ok(app);
             }
-            Err(_) => {
-                return Ok(Self {
-                    repos: vec![],
-                    active_repo: 0,
-                    end: false,
-                    repo_configs: vec![],
-                    selected_row: 0,
-                });
-            }
+            Err(_) => return Ok(app),
         }
     }
 
@@ -66,6 +59,8 @@ impl App {
                     KeyCode::Char('q') => self.end = true,
                     KeyCode::Char('l') => self.move_tab(1),
                     KeyCode::Char('h') => self.move_tab(-1),
+                    KeyCode::Char('k') => self.move_selected(1),
+                    KeyCode::Char('j') => self.move_selected(-1),
                     _ => (),
                 }
             }
@@ -74,12 +69,17 @@ impl App {
         // todo!()
     }
 
-    fn move_tab(&mut self, arg: i32) {
-        let n = (self.active_repo as i32) + arg;
+    fn move_tab(&mut self, direction: i32) {
+        let n = (self.active_repo as i32) + direction;
         if n < 0 {
             self.active_repo = (n + (self.repos.len() as i32)) as usize;
         }
+        self.selected_row = 0;
         self.active_repo = (n as usize) % self.repos.len()
+    }
+
+    fn move_selected(&mut self, direction: i16) {
+        self.selected_row += direction;
     }
 }
 
@@ -100,6 +100,8 @@ impl Widget for &App {
             .iter()
             .map(|(path, branch)| Row::new(vec![path.to_owned(), branch.to_owned()]))
             .collect();
+        let selected: usize = (((self.selected_row % rows.len() as i16) + rows.len() as i16)
+            % rows.len() as i16) as usize;
         let table = Table::new(rows, [Percentage(75), Percentage(25)])
             .header(Row::new(vec!["Path", "Branch"]))
             .row_highlight_style(Style::new().on_dark_gray())
@@ -108,7 +110,7 @@ impl Widget for &App {
                     .border_type(BorderType::Rounded)
                     .borders(Borders::ALL),
             );
-        let mut table_state: TableState = TableState::new().with_selected(self.selected_row);
+        let mut table_state: TableState = TableState::new().with_selected(selected);
         StatefulWidget::render(table, body, buf, &mut table_state);
     }
 }
