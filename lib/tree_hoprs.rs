@@ -27,6 +27,31 @@ impl RepoConfig {
     pub fn get_inactive_trees(&self) -> &Vec<String> {
         &self.inactive_trees
     }
+
+    /// Returns the list of worktrees for a given repo
+    ///
+    /// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
+    /// strings. The first item is the worktree path, and the second item is the branch name.
+    pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<(String, String)>> {
+        let mut cmd = Command::new("git");
+        cmd.arg("worktree")
+            .arg("list")
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
+        let output = cmd.output()?;
+
+        let mut trees = Vec::new();
+        for line in output.stdout.lines() {
+            let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
+            if !include_inactive && self.inactive_trees.contains(&items[0].to_string()) {
+                continue;
+            }
+            trees.push((
+                items[0].to_owned(),
+                items[2][1..items[2].len() - 1].to_owned(),
+            ));
+        }
+        Ok(trees)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -239,31 +264,6 @@ pub fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: boo
         &branch_name, worktree_path
     );
     Ok(())
-}
-
-// Returns the list of worktrees for a given repo
-//
-// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
-// strings. The first item is the worktree path, and the second item is the branch name.
-pub fn list_worktrees(values: RepoConfig, include_inactive: bool) -> Result<Vec<(String, String)>> {
-    let mut cmd = Command::new("git");
-    cmd.arg("worktree")
-        .arg("list")
-        .current_dir(format!("{}/{}", values.base_path, values.base_tree));
-    let output = cmd.output()?;
-
-    let mut trees = Vec::new();
-    for line in output.stdout.lines() {
-        let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
-        if !include_inactive && values.inactive_trees.contains(&items[0].to_string()) {
-            continue;
-        }
-        trees.push((
-            items[0].to_owned(),
-            items[2][1..items[2].len() - 1].to_owned(),
-        ));
-    }
-    Ok(trees)
 }
 
 pub fn delete_worktree(

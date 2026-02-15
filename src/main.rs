@@ -98,7 +98,7 @@ fn main() -> Result<()> {
 
     match args.command.unwrap() {
         TreeCommand::List { raw } => {
-            let worktrees = list_worktrees(values, false)?;
+            let worktrees = values.list_worktrees(false)?;
             if raw {
                 for tree in worktrees {
                     println!("{}", &tree.1);
