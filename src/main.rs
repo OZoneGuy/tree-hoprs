@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use lib::state::App;
 use lib::tree_hoprs::*;
-use lib::ui::*;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -70,8 +70,9 @@ fn main() -> Result<()> {
     }
 
     if args.command.is_none() {
+        let mut app = App::new()?;
         let terminal = ratatui::init();
-        let app_res = render(terminal).context("app loop failed");
+        let app_res = app.render(terminal);
         ratatui::restore();
         return app_res;
     }
