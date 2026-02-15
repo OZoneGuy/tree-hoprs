@@ -79,7 +79,7 @@ fn main() -> Result<()> {
     }
 
     // Used across the program to pass the configuration
-    let values: RepoConfig;
+    let mut values: RepoConfig;
 
     // Try to read the config file
     match get_values_from_config_file(&args.repo) {
@@ -124,7 +124,21 @@ fn main() -> Result<()> {
             for name in &branch_names {
                 println!("{}", name);
             }
-            delete_worktree(values, branch_names, args.dry_run)
+            for branch in branch_names {
+                match values.delete_worktree(&branch) {
+                    Ok(_) => println!("Deleted branch: {}", branch),
+                    Err(e) => match e.downcast_ref::<Errors>() {
+                        Some(Errors::WorktreeInactive { worktree }) => {
+                            println!("Worktree already inactive: {}", worktree)
+                        }
+                        Some(Errors::WorktreeDoesNotExist { worktree }) => {
+                            println!("Worktree does not exist {}", worktree);
+                        }
+                        None => return Err(e),
+                    },
+                };
+            }
+            Ok(())
         }
         TreeCommand::Update => {
             println!("Updating base worktree");

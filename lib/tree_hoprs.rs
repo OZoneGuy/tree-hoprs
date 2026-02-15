@@ -13,6 +13,15 @@ use path::PathBuf;
 use anyhow::{anyhow, Result};
 use dialoguer::Input;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Errors {
+    #[error("Worktree does not exist {worktree:?}")]
+    WorktreeDoesNotExist { worktree: String },
+    #[error("Worktree is inactive: {worktree:?}")]
+    WorktreeInactive { worktree: String },
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RepoConfig {
@@ -51,6 +60,49 @@ impl RepoConfig {
             ));
         }
         Ok(trees)
+    }
+
+    pub fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
+        let mut worktree_cmd = Command::new("git");
+        worktree_cmd
+            .arg("worktree")
+            .arg("list")
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
+        let output = worktree_cmd.output()?;
+        let worktrees: Vec<(String, String)> = from_utf8(&output.stdout)?
+            .lines()
+            .map(|line| {
+                let pair = line.split_whitespace().collect::<Vec<&str>>();
+                let name = {
+                    let mut chars = pair[2].chars();
+                    chars.next();
+                    chars.next_back();
+                    chars.as_str().to_string()
+                };
+                (pair[0].to_string(), name)
+            })
+            .collect();
+        let result = worktrees.iter().find(|(_, name)| name == &branch_name);
+        if result.is_none() {
+            return Err(Errors::WorktreeDoesNotExist {
+                worktree: branch_name.to_owned(),
+            }
+            .into());
+        };
+        let worktree_path = &result.as_ref().unwrap().0;
+        if self.inactive_trees.contains(&worktree_path) {
+            return Err(Errors::WorktreeInactive {
+                worktree: branch_name.to_owned(),
+            }
+            .into());
+        }
+        self.inactive_trees.push(worktree_path.clone());
+
+        let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
+        config.repo.insert(self.repo_name.clone(), self.clone());
+        fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
+
+        Ok(())
     }
 }
 
@@ -263,55 +315,6 @@ pub fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: boo
         "Branch {} created in worktree {}",
         &branch_name, worktree_path
     );
-    Ok(())
-}
-
-pub fn delete_worktree(
-    mut values: RepoConfig,
-    branch_names: Vec<String>,
-    dry_run: bool,
-) -> Result<()> {
-    let mut worktree_cmd = Command::new("git");
-    worktree_cmd
-        .arg("worktree")
-        .arg("list")
-        .current_dir(format!("{}/{}", values.base_path, values.base_tree));
-    let output = worktree_cmd.output()?;
-    let worktrees: Vec<(String, String)> = from_utf8(&output.stdout)?
-        .lines()
-        .map(|line| {
-            let pair = line.split_whitespace().collect::<Vec<&str>>();
-            let name = {
-                let mut chars = pair[2].chars();
-                chars.next();
-                chars.next_back();
-                chars.as_str().to_string()
-            };
-            (pair[0].to_string(), name)
-        })
-        .collect();
-    for branch_name in branch_names {
-        let result = worktrees.iter().find(|(_, name)| name == &branch_name);
-        if result.is_none() {
-            println!("Worktree {} does not exist", branch_name);
-            continue;
-        };
-        let worktree_path = &result.as_ref().unwrap().0;
-        if values.inactive_trees.contains(&worktree_path) {
-            println!("Worktree {} is already inactive", branch_name);
-            continue;
-        }
-        if dry_run {
-            println!("Would archive worktree {}", &worktree_path);
-            continue;
-        }
-        values.inactive_trees.push(worktree_path.clone());
-    }
-
-    let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
-    config.repo.insert(values.repo_name.clone(), values);
-    fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
-
     Ok(())
 }
 
