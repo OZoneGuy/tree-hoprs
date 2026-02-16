@@ -4,7 +4,7 @@ use std::{
     fs::{self, copy},
     io::BufRead,
     path,
-    process::Command,
+    process::{Command, Stdio},
     str::from_utf8,
 };
 
@@ -103,6 +103,114 @@ impl RepoConfig {
         fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
 
         Ok(())
+    }
+
+    pub fn create_worktree(
+        &mut self,
+        branch_name: &String,
+        silent: bool,
+        dry_run: bool,
+    ) -> Result<(String, String)> {
+        let buf_out = || {
+            if silent {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            }
+        };
+        let buf_err = || {
+            if silent {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            }
+        };
+        let mut pull_cmd = Command::new("git");
+        pull_cmd
+            .stdout(buf_out())
+            .stderr(buf_err())
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree))
+            .arg("pull");
+        pull_cmd.status()?;
+
+        // Create branch if it doesn't exist
+        let mut branch_cmd = Command::new("git");
+        branch_cmd
+            .stdout(buf_out())
+            .stderr(buf_err())
+            .arg("branch")
+            .arg(&branch_name)
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
+        if dry_run {
+            println!("Would create branch {}", branch_name);
+            println!("Would run command {:?}", branch_cmd);
+        } else {
+            branch_cmd.status()?;
+        };
+
+        // Create worktree
+        let worktree_path;
+        if !self.inactive_trees.is_empty() {
+            worktree_path = self.inactive_trees.first().unwrap().clone();
+        } else {
+            let worktree_name = format!(
+                "tree{}",
+                fs::read_dir(&self.base_path)?
+                    .filter(|f| f.is_ok() && f.as_ref().unwrap().file_type().unwrap().is_dir())
+                    .count()
+            );
+            worktree_path = format!("{}/{}", self.base_path, worktree_name);
+        }
+
+        // Check if worktree already exists
+        let mut worktree_cmd = Command::new("git");
+        worktree_cmd
+            .stdout(buf_out())
+            .stderr(buf_err())
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
+
+        if let Ok(worktree) = fs::read_dir(&worktree_path) {
+            if worktree.count() > 0 {
+                // Switch the branch in the existing worktree
+                worktree_cmd.current_dir(&worktree_path);
+                worktree_cmd.arg("switch").arg(&branch_name);
+            }
+        } else {
+            worktree_cmd
+                .arg("worktree")
+                .arg("add")
+                .arg(&worktree_path)
+                .arg(&branch_name);
+        }
+        worktree_cmd.status()?;
+
+        // NOTE: There is a better way to do this. Could use pop or something :/
+        if self.inactive_trees.contains(&worktree_path) {
+            self.inactive_trees.remove(0);
+            let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
+            config.repo.insert(config.active_repo.clone(), self.clone());
+            fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
+        }
+
+        // Copy common files from the base tree
+        for file in &self.copy_files {
+            let mut from_path = PathBuf::new();
+            from_path.push(self.base_path.clone());
+            from_path.push(self.base_tree.clone());
+            from_path.push(file.clone());
+            let from = from_path
+                .to_str()
+                .ok_or(anyhow!("Failed to create from path"))?;
+            let mut to_path = PathBuf::new();
+            to_path.push(self.base_path.clone());
+            to_path.push(self.base_tree.clone());
+            to_path.push(file.clone());
+            let to = to_path
+                .to_str()
+                .ok_or(anyhow!("Failed to create from path"))?;
+            copy(from, to)?;
+        }
+        Ok((branch_name.to_owned(), worktree_path))
     }
 }
 
@@ -218,104 +326,6 @@ pub fn get_values_from_config_file(repo: &Option<String>) -> Result<RepoConfig> 
     } else {
         Ok(config.repo.get(repo.as_ref().unwrap()).unwrap().clone())
     }
-}
-
-pub fn create_worktree(mut values: RepoConfig, branch_name: String, dry_run: bool) -> Result<()> {
-    let mut pull_cmd = Command::new("git");
-    pull_cmd
-        .current_dir(format!("{}/{}", values.base_path, values.base_tree))
-        .arg("pull");
-    pull_cmd.status()?;
-
-    // Create branch if it doesn't exist
-    let mut branch_cmd = Command::new("git");
-    branch_cmd
-        .arg("branch")
-        .arg(&branch_name)
-        .current_dir(format!("{}/{}", values.base_path, values.base_tree));
-    if dry_run {
-        println!("Would create branch {}", branch_name);
-        println!("Would run command {:?}", branch_cmd);
-    } else {
-        branch_cmd.status()?;
-    };
-
-    // Create worktree
-    let worktree_path;
-    if !values.inactive_trees.is_empty() {
-        worktree_path = values.inactive_trees.first().unwrap().clone();
-    } else {
-        let worktree_name = format!(
-            "tree{}",
-            fs::read_dir(&values.base_path)?
-                .filter(|f| f.is_ok() && f.as_ref().unwrap().file_type().unwrap().is_dir())
-                .count()
-        );
-        worktree_path = format!("{}/{}", values.base_path, worktree_name);
-    }
-
-    // Check if worktree already exists
-    let mut worktree_cmd = Command::new("git");
-    worktree_cmd.current_dir(format!("{}/{}", values.base_path, values.base_tree));
-
-    if let Ok(worktree) = fs::read_dir(&worktree_path) {
-        if worktree.count() > 0 {
-            println!(
-                "Worktree {} already exists, switching branch",
-                worktree_path
-            );
-            // Switch the branch in the existing worktree
-            worktree_cmd.current_dir(&worktree_path);
-            worktree_cmd.arg("switch").arg(&branch_name);
-        }
-    } else {
-        worktree_cmd
-            .arg("worktree")
-            .arg("add")
-            .arg(&worktree_path)
-            .arg(&branch_name);
-    }
-    if dry_run {
-        println!("Would create worktree {}", &worktree_path);
-        println!("Would run command {:?}", worktree_cmd);
-    } else {
-        worktree_cmd.status()?;
-
-        // NOTE: There is a better way to do this. Could use pop or something :/
-        if values.inactive_trees.contains(&worktree_path) {
-            values.inactive_trees.remove(0);
-            let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
-            config
-                .repo
-                .insert(config.active_repo.clone(), values.clone());
-            fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
-        }
-    };
-
-    // Copy common files from the base tree
-    for file in values.copy_files {
-        let mut from_path = PathBuf::new();
-        from_path.push(values.base_path.clone());
-        from_path.push(values.base_tree.clone());
-        from_path.push(file.clone());
-        let from = from_path
-            .to_str()
-            .ok_or(anyhow!("Failed to create from path"))?;
-        let mut to_path = PathBuf::new();
-        to_path.push(values.base_path.clone());
-        to_path.push(values.base_tree.clone());
-        to_path.push(file.clone());
-        let to = to_path
-            .to_str()
-            .ok_or(anyhow!("Failed to create from path"))?;
-        copy(from, to)?;
-    }
-
-    println!(
-        "Branch {} created in worktree {}",
-        &branch_name, worktree_path
-    );
-    Ok(())
 }
 
 pub fn update_main_worktree(values: RepoConfig, dry_run: bool) -> Result<()> {

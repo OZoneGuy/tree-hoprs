@@ -117,7 +117,13 @@ fn main() -> Result<()> {
         }
         TreeCommand::Create { branch_name: name } => {
             println!("Creating worktree {}", name);
-            create_worktree(values, name, args.dry_run)
+            let (branch_name, worktree_path) =
+                values.create_worktree(&name, false, args.dry_run)?;
+            println!(
+                "Branch {} created in worktree {}",
+                branch_name, worktree_path
+            );
+            Ok(())
         }
         TreeCommand::Delete { branch_names } => {
             println!("Deleting worktres:");
