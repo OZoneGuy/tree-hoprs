@@ -156,7 +156,7 @@ impl App {
 
 impl Widget for &App {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        use Constraint::{Fill, Length, Max, Min, Percentage};
+        use Constraint::{Fill, Length, Percentage};
         let vertical =
             Layout::vertical([Length(3), Fill(1), Length(4)]).spacing(Spacing::Overlap(1));
         let [tabs, body, footer] = vertical.areas(area);
