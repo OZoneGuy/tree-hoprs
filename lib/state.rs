@@ -180,12 +180,12 @@ impl Widget for &App {
             .context("failed to list worktrees")
             .unwrap()
             .iter()
-            .map(|(path, branch)| Row::new(vec![path.to_owned(), branch.to_owned()]))
+            .map(|(path, branch)| Row::new(vec![branch.to_owned(), path.to_owned()]))
             .collect();
         let selected: usize = self.get_selcted_row(rows.len() as i16);
-        let table = Table::new(rows, [Min(64), Max(32)])
-            .header(Row::new(vec!["Path", "Branch"]).bold())
-            .row_highlight_style(Style::new().bold().yellow())
+        let table = Table::new(rows, [Fill(1), Fill(2)])
+            .header(Row::new(vec!["Branch", "Path"]).bold())
+            .row_highlight_style(Style::new().italic().blue())
             .highlight_symbol(">> ")
             .block(
                 Block::new()
