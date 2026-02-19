@@ -4,7 +4,9 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode};
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Constraint, Rect, Spacing};
+use ratatui::style::{Styled, Stylize};
+use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::{BorderType, Borders, Paragraph, Row, StatefulWidget, Table, TableState};
 use ratatui::DefaultTerminal;
 use ratatui::{
@@ -133,6 +135,7 @@ impl App {
         let center_area = area.centered(Length(64), Length(10));
         Block::bordered()
             .border_type(BorderType::Rounded)
+            .on_dark_gray()
             .title(Line::from("Create worktree").centered())
             .render(center_area, buf);
         let [_, top, input_area] =
@@ -153,14 +156,25 @@ impl App {
 
 impl Widget for &App {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer) {
-        use Constraint::{Fill, Length, Percentage};
-        let vertical = Layout::vertical([Length(3), Fill(1), Length(4)]);
+        use Constraint::{Fill, Length, Max, Min, Percentage};
+        let vertical =
+            Layout::vertical([Length(3), Fill(1), Length(4)]).spacing(Spacing::Overlap(1));
         let [tabs, body, footer] = vertical.areas(area);
-        Tabs::new(self.repos.clone().into_iter())
-            .block(Block::bordered().title(Line::from("TreeHoprs").centered()))
-            .highlight_style(Style::default().white().on_dark_gray())
-            .select(self.active_repo)
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .merge_borders(MergeStrategy::Exact)
+            .title(
+                Line::from(vec!["TreeHoprs ".bold(), env!("CARGO_PKG_VERSION").bold()]).centered(),
+            )
             .render(tabs, buf);
+        let [tab_internal] = Layout::vertical(vec![Percentage(100)])
+            .margin(1)
+            .areas(tabs);
+        Tabs::new(self.repos.clone().into_iter())
+            .style(Style::default().gray())
+            .highlight_style(Style::default().cyan().bold())
+            .select(self.active_repo)
+            .render(tab_internal, buf);
         let rows: Vec<Row> = self.repo_configs[self.active_repo]
             .list_worktrees(false)
             .context("failed to list worktrees")
@@ -169,21 +183,48 @@ impl Widget for &App {
             .map(|(path, branch)| Row::new(vec![path.to_owned(), branch.to_owned()]))
             .collect();
         let selected: usize = self.get_selcted_row(rows.len() as i16);
-        let table = Table::new(rows, [Percentage(75), Percentage(25)])
-            .header(Row::new(vec!["Path", "Branch"]))
-            .row_highlight_style(Style::new().on_dark_gray())
+        let table = Table::new(rows, [Min(64), Max(32)])
+            .header(Row::new(vec!["Path", "Branch"]).bold())
+            .row_highlight_style(Style::new().bold().yellow())
+            .highlight_symbol(">> ")
             .block(
                 Block::new()
                     .border_type(BorderType::Rounded)
+                    .merge_borders(MergeStrategy::Fuzzy)
                     .borders(Borders::ALL),
             );
         let mut table_state: TableState = TableState::new().with_selected(selected);
         StatefulWidget::render(table, body, buf, &mut table_state);
 
-        Paragraph::new("[d] Delete | [c] Create | [_] Create new repository \n [h] Previos tab | [l] Next tab | [j] Select next | [k] Select previous | [q] Quit")
-            .centered()
-            .block(Block::new().borders(Borders::ALL).border_type(BorderType::Rounded))
-            .render(footer, buf);
+        let hint_style = Style::new().bold();
+        Paragraph::new(vec![
+            Line::from(vec![
+                "[d] Delete".set_style(hint_style),
+                " | ".into(),
+                "[c] Create".set_style(hint_style),
+                " | ".into(),
+                "[_] Create new repository".set_style(hint_style).dim(),
+            ]),
+            Line::from(vec![
+                "[h] Previos tab".set_style(hint_style),
+                " | ".into(),
+                "[l] Next tab".set_style(hint_style),
+                " | ".into(),
+                "[j] Select next".set_style(hint_style),
+                " | ".into(),
+                "[k] Select previous".set_style(hint_style),
+                " | ".into(),
+                "[q] Quit".set_style(hint_style),
+            ]),
+        ])
+        .centered()
+        .block(
+            Block::new()
+                .borders(Borders::ALL)
+                .merge_borders(MergeStrategy::Fuzzy)
+                .border_type(BorderType::Rounded),
+        )
+        .render(footer, buf);
 
         if self.creating_worktree {
             self.draw_create_popup(area, buf);
