@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::layout::{Constraint, Rect, Spacing};
-use ratatui::style::{Styled, Stylize};
+use ratatui::style::{Color, Styled, Stylize};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::{BorderType, Borders, Paragraph, Row, StatefulWidget, Table, TableState};
 use ratatui::DefaultTerminal;
@@ -90,6 +90,7 @@ impl App {
                         KeyCode::Char('j') => self.move_selected(1),
                         KeyCode::Char('d') => self.delete_worktree()?,
                         KeyCode::Char('c') => self.create_worktree()?,
+                        KeyCode::Char('u') => self.update_mainworktree()?,
                         _ => (),
                     }
                 }
@@ -152,6 +153,10 @@ impl App {
             )
             .render(input_area.centered_horizontally(Percentage(75)), buf);
     }
+
+    fn update_mainworktree(&self) -> Result<()> {
+        self.repo_configs[self.active_repo].update_main_worktree(false)
+    }
 }
 
 impl Widget for &App {
@@ -203,16 +208,14 @@ impl Widget for &App {
                 " | ".into(),
                 "[c] Create".set_style(hint_style),
                 " | ".into(),
+                "[u] Update".set_style(hint_style),
+                " | ".into(),
                 "[_] Create new repository".set_style(hint_style).dim(),
             ]),
             Line::from(vec![
-                "[h] Previos tab".set_style(hint_style),
+                "[h/l] Switch tabs".set_style(hint_style),
                 " | ".into(),
-                "[l] Next tab".set_style(hint_style),
-                " | ".into(),
-                "[j] Select next".set_style(hint_style),
-                " | ".into(),
-                "[k] Select previous".set_style(hint_style),
+                "[j/k] Select".set_style(hint_style),
                 " | ".into(),
                 "[q] Quit".set_style(hint_style),
             ]),

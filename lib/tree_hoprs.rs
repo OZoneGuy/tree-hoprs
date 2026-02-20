@@ -212,6 +212,19 @@ impl RepoConfig {
         }
         Ok((branch_name.to_owned(), worktree_path))
     }
+
+    pub fn update_main_worktree(&self, dry_run: bool) -> Result<()> {
+        let mut cmd = Command::new("git");
+        cmd.arg("pull")
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
+        if dry_run {
+            println!("Would run command {:?}", cmd);
+        } else {
+            cmd.output()?;
+        };
+
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -326,19 +339,6 @@ pub fn get_values_from_config_file(repo: &Option<String>) -> Result<RepoConfig> 
     } else {
         Ok(config.repo.get(repo.as_ref().unwrap()).unwrap().clone())
     }
-}
-
-pub fn update_main_worktree(values: RepoConfig, dry_run: bool) -> Result<()> {
-    let mut cmd = Command::new("git");
-    cmd.arg("pull")
-        .current_dir(format!("{}/{}", values.base_path, values.base_tree));
-    if dry_run {
-        println!("Would run command {:?}", cmd);
-    } else {
-        cmd.status()?;
-    };
-
-    Ok(())
 }
 
 pub fn add_file(mut values: RepoConfig, file_path: &str) -> Result<()> {

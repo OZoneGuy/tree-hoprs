@@ -148,7 +148,7 @@ fn main() -> Result<()> {
         }
         TreeCommand::Update => {
             println!("Updating base worktree");
-            update_main_worktree(values, args.dry_run)
+            values.update_main_worktree(args.dry_run)
         }
         TreeCommand::SetRepo { repo_name } => {
             println!("Setting config value");
