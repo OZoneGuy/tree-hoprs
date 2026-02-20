@@ -2,12 +2,12 @@ use std::{
     collections::HashMap,
     env::var,
     fs::{self, copy},
-    io::BufRead,
     path,
     process::{Command, Stdio},
     str::from_utf8,
 };
 
+use git2::Repository;
 use path::PathBuf;
 
 use anyhow::{anyhow, Result};
@@ -42,22 +42,22 @@ impl RepoConfig {
     /// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
     /// strings. The first item is the worktree path, and the second item is the branch name.
     pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<(String, String)>> {
-        let mut cmd = Command::new("git");
-        cmd.arg("worktree")
-            .arg("list")
-            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
-        let output = cmd.output()?;
-
+        // Get listt of worktrees
+        let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
         let mut trees = Vec::new();
-        for line in output.stdout.lines() {
-            let items: Vec<&str> = line.as_ref().unwrap().split_whitespace().collect();
-            if !include_inactive && self.inactive_trees.contains(&items[0].to_string()) {
+
+        // filter out worktrees in inactive list
+        for tree in repo.worktrees()?.iter() {
+            let path = repo
+                .find_worktree(tree.unwrap())?
+                .path()
+                .to_str()
+                .unwrap()
+                .to_owned();
+            if !include_inactive && self.inactive_trees.contains(&path) {
                 continue;
             }
-            trees.push((
-                items[0].to_owned(),
-                items[2][1..items[2].len() - 1].to_owned(),
-            ));
+            trees.push((path, tree.unwrap().to_owned()));
         }
         Ok(trees)
     }
