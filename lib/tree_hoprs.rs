@@ -4,7 +4,6 @@ use std::{
     fs::{self, copy},
     path,
     process::{Command, Stdio},
-    str::from_utf8,
 };
 
 use git2::Repository;
@@ -63,25 +62,7 @@ impl RepoConfig {
     }
 
     pub fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
-        let mut worktree_cmd = Command::new("git");
-        worktree_cmd
-            .arg("worktree")
-            .arg("list")
-            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
-        let output = worktree_cmd.output()?;
-        let worktrees: Vec<(String, String)> = from_utf8(&output.stdout)?
-            .lines()
-            .map(|line| {
-                let pair = line.split_whitespace().collect::<Vec<&str>>();
-                let name = {
-                    let mut chars = pair[2].chars();
-                    chars.next();
-                    chars.next_back();
-                    chars.as_str().to_string()
-                };
-                (pair[0].to_string(), name)
-            })
-            .collect();
+        let worktrees = self.list_worktrees(false)?;
         let result = worktrees.iter().find(|(_, name)| name == &branch_name);
         if result.is_none() {
             return Err(Errors::WorktreeDoesNotExist {
