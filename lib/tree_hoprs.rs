@@ -43,7 +43,7 @@ impl RepoConfig {
     ///
     /// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
     /// strings. The first item is the worktree path, and the second item is the branch name.
-    pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<(String, String)>> {
+    pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<WorktreeListing>> {
         // Get listt of worktrees
         let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
         let mut trees = Vec::new();
@@ -57,21 +57,30 @@ impl RepoConfig {
             }
             let r = Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
             let head = r.head()?;
-            trees.push((path, head.name().unwrap().to_owned()));
+            trees.push(WorktreeListing {
+                path,
+                reference: head.name().unwrap().to_owned(),
+                state: WorktreeState {
+                    pr_state: PrState::Open,
+                    local_state: LocalState::Clean,
+                },
+            });
         }
         Ok(trees)
     }
 
     pub fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
         let worktrees = self.list_worktrees(false)?;
-        let result = worktrees.iter().find(|(_, name)| name == &branch_name);
+        let result = worktrees
+            .iter()
+            .find(|listing| listing.reference == branch_name);
         if result.is_none() {
             return Err(Errors::WorktreeDoesNotExist {
                 worktree: branch_name.to_owned(),
             }
             .into());
         };
-        let worktree_path = &result.as_ref().unwrap().0;
+        let worktree_path = &result.as_ref().unwrap().path;
         if self.inactive_trees.contains(&worktree_path) {
             return Err(Errors::WorktreeInactive {
                 worktree: branch_name.to_owned(),
@@ -210,6 +219,33 @@ impl Config {
         self.repo.values().map(|c| c.to_owned()).collect()
     }
 }
+
+pub enum PrState {
+    Loading,
+    Closed,
+    Open,
+    Failing,
+    Requested,
+    Merged,
+}
+
+pub enum LocalState {
+    Clean,
+    Changes,
+    Staged,
+}
+
+pub struct WorktreeState {
+    pub pr_state: PrState,
+    pub(crate) local_state: LocalState,
+}
+
+pub struct WorktreeListing {
+    pub path: String,
+    pub reference: String,
+    pub state: WorktreeState,
+}
+
 /// The config file path
 /// Defaults to `~/.config/tree-hoprs.json`
 #[allow(non_snake_case)]

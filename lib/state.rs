@@ -121,7 +121,7 @@ impl App {
         let to_delete = &work_trees
             .get(self.get_selcted_row(work_trees.len() as i16))
             .ok_or(anyhow!("IOOB when selecting worktree"))?
-            .1;
+            .reference;
         self.repo_configs[self.active_repo].delete_worktree(to_delete)?;
         return Ok(());
     }
@@ -185,7 +185,7 @@ impl Widget for &App {
             .context("failed to list worktrees")
             .unwrap()
             .iter()
-            .map(|(path, branch)| Row::new(vec![branch.to_owned(), path.to_owned()]))
+            .map(|listing| Row::new(vec![listing.reference.clone(), listing.path.clone()]))
             .collect();
         let selected: usize = self.get_selcted_row(rows.len() as i16);
         let table = Table::new(rows, [Fill(1), Fill(2)])
