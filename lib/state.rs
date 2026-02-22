@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::layout::{Constraint, Rect, Spacing};
-use ratatui::style::{Color, Styled, Stylize};
+use ratatui::style::{Styled, Stylize};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::{BorderType, Borders, Paragraph, Row, StatefulWidget, Table, TableState};
 use ratatui::DefaultTerminal;
