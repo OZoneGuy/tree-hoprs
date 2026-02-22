@@ -2,14 +2,15 @@ use std::{
     collections::HashMap,
     env::var,
     fs::{self, copy},
-    path,
-    process::{Command, Stdio},
+    path::{self, Path},
 };
 
-use git2::Repository;
+use git2::{
+    build::CheckoutBuilder, Cred, FetchOptions, RemoteCallbacks, Repository, WorktreeAddOptions,
+};
 use path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use dialoguer::Input;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -20,6 +21,8 @@ pub enum Errors {
     WorktreeDoesNotExist { worktree: String },
     #[error("Worktree is inactive: {worktree:?}")]
     WorktreeInactive { worktree: String },
+    #[error("No remote defined")]
+    NoRemote,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -87,45 +90,15 @@ impl RepoConfig {
     pub fn create_worktree(
         &mut self,
         branch_name: &String,
-        silent: bool,
-        dry_run: bool,
+        _silent: bool,
+        _dry_run: bool,
     ) -> Result<(String, String)> {
-        let buf_out = || {
-            if silent {
-                Stdio::null()
-            } else {
-                Stdio::inherit()
-            }
-        };
-        let buf_err = || {
-            if silent {
-                Stdio::null()
-            } else {
-                Stdio::inherit()
-            }
-        };
-        let mut pull_cmd = Command::new("git");
-        pull_cmd
-            .stdout(buf_out())
-            .stderr(buf_err())
-            .current_dir(format!("{}/{}", self.base_path, self.base_tree))
-            .arg("pull");
-        pull_cmd.status()?;
+        self.update_main_worktree(false)?;
 
+        let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
         // Create branch if it doesn't exist
-        let mut branch_cmd = Command::new("git");
-        branch_cmd
-            .stdout(buf_out())
-            .stderr(buf_err())
-            .arg("branch")
-            .arg(&branch_name)
-            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
-        if dry_run {
-            println!("Would create branch {}", branch_name);
-            println!("Would run command {:?}", branch_cmd);
-        } else {
-            branch_cmd.status()?;
-        };
+        let head_commit = repo.head()?.peel_to_commit()?;
+        let branch = repo.branch(branch_name, &head_commit, true)?;
 
         // Create worktree
         let worktree_path;
@@ -141,27 +114,27 @@ impl RepoConfig {
             worktree_path = format!("{}/{}", self.base_path, worktree_name);
         }
 
-        // Check if worktree already exists
-        let mut worktree_cmd = Command::new("git");
-        worktree_cmd
-            .stdout(buf_out())
-            .stderr(buf_err())
-            .current_dir(format!("{}/{}", self.base_path, self.base_tree));
-
+        // Switch the branch in the existing worktree
         if let Ok(worktree) = fs::read_dir(&worktree_path) {
             if worktree.count() > 0 {
                 // Switch the branch in the existing worktree
-                worktree_cmd.current_dir(&worktree_path);
-                worktree_cmd.arg("switch").arg(&branch_name);
+                let _repo = Repository::open(&worktree_path)?;
+                _repo
+                    .set_head(branch.get().name().unwrap())
+                    .context("setting head in existing dir")?;
+                _repo.checkout_head(Some(CheckoutBuilder::new().force()))?;
             }
         } else {
-            worktree_cmd
-                .arg("worktree")
-                .arg("add")
-                .arg(&worktree_path)
-                .arg(&branch_name);
+            repo.worktree(
+                branch_name,
+                Path::new(&worktree_path),
+                Some(
+                    WorktreeAddOptions::new()
+                        .checkout_existing(true)
+                        .reference(Some(&branch.into_reference())),
+                ),
+            )?;
         }
-        worktree_cmd.status()?;
 
         // NOTE: There is a better way to do this. Could use pop or something :/
         if self.inactive_trees.contains(&worktree_path) {

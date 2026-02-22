@@ -140,6 +140,7 @@ fn main() -> Result<()> {
                         Some(Errors::WorktreeDoesNotExist { worktree }) => {
                             println!("Worktree does not exist {}", worktree);
                         }
+                        Some(Errors::NoRemote) => println!("Remote does not exist"),
                         None => return Err(e),
                     },
                 };
