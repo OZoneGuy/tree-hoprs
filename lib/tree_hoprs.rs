@@ -46,17 +46,15 @@ impl RepoConfig {
         let mut trees = Vec::new();
 
         // filter out worktrees in inactive list
-        for tree in repo.worktrees()?.iter() {
-            let path = repo
-                .find_worktree(tree.unwrap())?
-                .path()
-                .to_str()
-                .unwrap()
-                .to_owned();
+        for tree_name in repo.worktrees()?.iter() {
+            let worktree = repo.find_worktree(tree_name.unwrap())?;
+            let path = worktree.path().to_str().unwrap().to_owned();
             if !include_inactive && self.inactive_trees.contains(&path) {
                 continue;
             }
-            trees.push((path, tree.unwrap().to_owned()));
+            let r = Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
+            let head = r.head()?;
+            trees.push((path, head.name().unwrap().to_owned()));
         }
         Ok(trees)
     }
