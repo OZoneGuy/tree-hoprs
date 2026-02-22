@@ -101,14 +101,14 @@ fn main() -> Result<()> {
             let worktrees = values.list_worktrees(false)?;
             if raw {
                 for tree in worktrees {
-                    println!("{}", &tree.1);
+                    println!("{}", &tree.reference);
                 }
             } else {
                 let mut table = Table::new();
                 table.set_header(["Path", "Branch"]);
 
                 for tree in worktrees {
-                    table.add_row([tree.0, tree.1]);
+                    table.add_row([tree.path, tree.reference]);
                 }
                 println!("{}", table);
             }
