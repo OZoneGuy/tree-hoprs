@@ -57,12 +57,40 @@ impl RepoConfig {
             }
             let r = Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
             let head = r.head()?;
+            let local_state = {
+                use git2::Status;
+                let is_changed = repo.statuses(None)?.iter().any(|entry| {
+                    entry.status().contains(
+                        Status::WT_NEW
+                            | Status::WT_RENAMED
+                            | Status::WT_MODIFIED
+                            | Status::WT_DELETED
+                            | Status::WT_TYPECHANGE,
+                    )
+                });
+                let is_staged = repo.statuses(None)?.iter().any(|entry| {
+                    entry.status().contains(
+                        Status::INDEX_NEW
+                            | Status::INDEX_RENAMED
+                            | Status::INDEX_DELETED
+                            | Status::INDEX_MODIFIED
+                            | Status::INDEX_TYPECHANGE,
+                    )
+                });
+                if is_changed {
+                    LocalState::Changes
+                } else if is_staged {
+                    LocalState::Staged
+                } else {
+                    LocalState::Clean
+                }
+            };
             trees.push(WorktreeListing {
                 path,
                 reference: head.name().unwrap().to_owned(),
                 state: WorktreeState {
                     pr_state: PrState::Open,
-                    local_state: LocalState::Clean,
+                    local_state,
                 },
             });
         }
@@ -237,7 +265,7 @@ pub enum LocalState {
 
 pub struct WorktreeState {
     pub pr_state: PrState,
-    pub(crate) local_state: LocalState,
+    pub local_state: LocalState,
 }
 
 pub struct WorktreeListing {
