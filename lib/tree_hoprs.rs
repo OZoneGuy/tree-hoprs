@@ -146,7 +146,7 @@ impl RepoConfig {
         if self.inactive_trees.contains(&worktree_path) {
             self.inactive_trees.remove(0);
             let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
-            config.repo.insert(config.active_repo.clone(), self.clone());
+            config.repo.insert(self.repo_name.clone(), self.clone());
             fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
         }
 
