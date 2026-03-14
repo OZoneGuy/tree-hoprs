@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode};
 use ratatui::layout::{Constraint, Rect, Spacing};
-use ratatui::style::{Color, Styled, Stylize};
+use ratatui::style::{Styled, Stylize};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::{BorderType, Borders, Paragraph, Row, StatefulWidget, Table, TableState};
 use ratatui::DefaultTerminal;
@@ -121,7 +121,7 @@ impl App {
         let to_delete = &work_trees
             .get(self.get_selcted_row(work_trees.len() as i16))
             .ok_or(anyhow!("IOOB when selecting worktree"))?
-            .1;
+            .reference;
         self.repo_configs[self.active_repo].delete_worktree(to_delete)?;
         return Ok(());
     }
@@ -185,11 +185,23 @@ impl Widget for &App {
             .context("failed to list worktrees")
             .unwrap()
             .iter()
-            .map(|(path, branch)| Row::new(vec![branch.to_owned(), path.to_owned()]))
+            .map(|listing| {
+                use crate::tree_hoprs::LocalState::*;
+                let local_state_icon = match listing.state.local_state {
+                    Clean => "".set_style(Style::default().green()),
+                    Staged => "".set_style(Style::default().yellow()),
+                    Changes => "".set_style(Style::default().red()),
+                };
+                Row::new(vec![
+                    listing.reference.clone().into(),
+                    listing.path.clone().into(),
+                    local_state_icon,
+                ])
+            })
             .collect();
         let selected: usize = self.get_selcted_row(rows.len() as i16);
-        let table = Table::new(rows, [Fill(1), Fill(2)])
-            .header(Row::new(vec!["Branch", "Path"]).bold())
+        let table = Table::new(rows, [Fill(2), Fill(4), Fill(1)])
+            .header(Row::new(vec!["Branch", "Path", "Local state"]).bold())
             .row_highlight_style(Style::new().italic().blue())
             .highlight_symbol(">> ")
             .block(

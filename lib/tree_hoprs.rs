@@ -43,10 +43,14 @@ impl RepoConfig {
     ///
     /// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
     /// strings. The first item is the worktree path, and the second item is the branch name.
-    pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<(String, String)>> {
+    pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<WorktreeListing>> {
         // Get listt of worktrees
-        let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
+        let base_path = format!("{}/{}", self.base_path, self.base_tree);
+        let repo = Repository::open(&base_path)?;
         let mut trees = Vec::new();
+
+        // Add the base tree
+        trees.push(create_listing_from_repo(&repo, base_path)?);
 
         // filter out worktrees in inactive list
         for tree_name in repo.worktrees()?.iter() {
@@ -55,23 +59,25 @@ impl RepoConfig {
             if !include_inactive && self.inactive_trees.contains(&path) {
                 continue;
             }
-            let r = Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
-            let head = r.head()?;
-            trees.push((path, head.name().unwrap().to_owned()));
+            let worktree_repo =
+                Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
+            trees.push(create_listing_from_repo(&worktree_repo, path)?);
         }
         Ok(trees)
     }
 
     pub fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
         let worktrees = self.list_worktrees(false)?;
-        let result = worktrees.iter().find(|(_, name)| name == &branch_name);
+        let result = worktrees
+            .iter()
+            .find(|listing| listing.reference == branch_name);
         if result.is_none() {
             return Err(Errors::WorktreeDoesNotExist {
                 worktree: branch_name.to_owned(),
             }
             .into());
         };
-        let worktree_path = &result.as_ref().unwrap().0;
+        let worktree_path = &result.as_ref().unwrap().path;
         if self.inactive_trees.contains(&worktree_path) {
             return Err(Errors::WorktreeInactive {
                 worktree: branch_name.to_owned(),
@@ -140,7 +146,7 @@ impl RepoConfig {
         if self.inactive_trees.contains(&worktree_path) {
             self.inactive_trees.remove(0);
             let mut config: Config = serde_json::from_str(&fs::read_to_string(CONFIG_FILE())?)?;
-            config.repo.insert(config.active_repo.clone(), self.clone());
+            config.repo.insert(self.repo_name.clone(), self.clone());
             fs::write(CONFIG_FILE(), serde_json::to_string_pretty(&config)?)?;
         }
 
@@ -210,6 +216,39 @@ impl Config {
         self.repo.values().map(|c| c.to_owned()).collect()
     }
 }
+
+#[derive(Default)]
+pub enum PrState {
+    #[default]
+    Loading,
+    Closed,
+    Open,
+    Failing,
+    Requested,
+    Merged,
+}
+
+#[derive(Default)]
+pub enum LocalState {
+    #[default]
+    Clean,
+    Changes,
+    Staged,
+}
+
+#[derive(Default)]
+pub struct WorktreeState {
+    pub pr_state: PrState,
+    pub local_state: LocalState,
+}
+
+#[derive(Default)]
+pub struct WorktreeListing {
+    pub path: String,
+    pub reference: String,
+    pub state: WorktreeState,
+}
+
 /// The config file path
 /// Defaults to `~/.config/tree-hoprs.json`
 #[allow(non_snake_case)]
@@ -328,4 +367,43 @@ pub fn add_file(mut values: RepoConfig, file_path: &str) -> Result<()> {
     let mut config = get_config_file()?;
     config.repo.insert(values.repo_name.clone(), values);
     Ok(())
+}
+
+fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeListing> {
+    let mut listing: WorktreeListing = WorktreeListing::default();
+    listing.path = path;
+    listing.reference = repo.head()?.shorthand().unwrap().to_owned();
+    let local_state = {
+        use git2::Status;
+        let is_changed = repo.statuses(None)?.iter().any(|entry| {
+            entry.status().contains(
+                Status::WT_NEW
+                    | Status::WT_RENAMED
+                    | Status::WT_MODIFIED
+                    | Status::WT_DELETED
+                    | Status::WT_TYPECHANGE,
+            )
+        });
+        let is_staged = repo.statuses(None)?.iter().any(|entry| {
+            entry.status().contains(
+                Status::INDEX_NEW
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_MODIFIED
+                    | Status::INDEX_TYPECHANGE,
+            )
+        });
+        if is_changed {
+            LocalState::Changes
+        } else if is_staged {
+            LocalState::Staged
+        } else {
+            LocalState::Clean
+        }
+    };
+    listing.state = WorktreeState {
+        pr_state: PrState::Loading,
+        local_state,
+    };
+    return Ok(listing);
 }
