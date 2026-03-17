@@ -3,11 +3,10 @@ use std::{
     env::var,
     fs::{self, copy},
     path::{self, Path},
+    process::Command,
 };
 
-use git2::{
-    build::CheckoutBuilder, Cred, FetchOptions, RemoteCallbacks, Repository, WorktreeAddOptions,
-};
+use git2::{build::CheckoutBuilder, Repository, WorktreeAddOptions};
 use path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
@@ -172,30 +171,10 @@ impl RepoConfig {
     }
 
     pub fn update_main_worktree(&self, _dry_run: bool) -> Result<()> {
-        let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
-        let remotes = repo.remotes()?;
-        let remote = remotes.get(0).ok_or(Errors::NoRemote)?;
-        let mut rcb = RemoteCallbacks::new();
-        rcb.credentials(|_u, user, _types| {
-            Cred::ssh_key(
-                user.unwrap(),
-                None,
-                Path::new(&format!("{}/.ssh/github", env!("HOME"))),
-                None,
-            )
-        });
-        let mut remote_obj = repo.find_remote(remote)?;
-        remote_obj
-            .fetch(
-                &[&self.base_tree],
-                Some(FetchOptions::new().remote_callbacks(rcb)),
-                None,
-            )
-            .context("Feching remote main branch")?;
-        let remote_ref = repo.find_reference(&format!("refs/heads/{}", self.base_tree))?;
-        repo.set_head(remote_ref.name().ok_or(Errors::NoRemote)?)?;
-        repo.checkout_head(Some(CheckoutBuilder::default().force()))?;
-
+        Command::new("git")
+            .arg("pull")
+            .current_dir(format!("{}/{}", self.base_path, self.base_tree))
+            .output()?;
         Ok(())
     }
 }
