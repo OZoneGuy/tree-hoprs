@@ -16,7 +16,8 @@ use ratatui::{
     widgets::{Block, Tabs, Widget},
 };
 
-use crate::tree_hoprs::{get_config_file, RepoConfig};
+use crate::config::Config;
+use crate::repo_config::RepoConfig;
 
 #[derive(Default)]
 pub struct App {
@@ -32,7 +33,7 @@ pub struct App {
 impl App {
     pub fn new() -> Result<Self> {
         let mut app = Self::default();
-        match get_config_file() {
+        match Config::get_config_file() {
             Ok(conf) => {
                 let repos = conf.get_repos();
                 app.repos = repos;
@@ -186,7 +187,7 @@ impl Widget for &App {
             .unwrap()
             .iter()
             .map(|listing| {
-                use crate::tree_hoprs::LocalState::*;
+                use crate::repo_config::LocalState::*;
                 let local_state_icon = match listing.state.local_state {
                     Clean => "".set_style(Style::default().green()),
                     Staged => "".set_style(Style::default().yellow()),

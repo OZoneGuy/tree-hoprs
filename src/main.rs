@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use comfy_table::Table;
+use lib::config::Config;
+use lib::repo_config::RepoConfig;
 use lib::state::App;
 use lib::tree_hoprs::*;
 
@@ -78,27 +80,21 @@ fn main() -> Result<()> {
         return app_res;
     }
 
-    // Used across the program to pass the configuration
-    let mut values: RepoConfig;
+    let mut config: Config = match Config::get_config_file() {
+        Ok(c) => c,
+        Err(_) => Config::create_config_file(&args.repo)?,
+    };
 
-    // Try to read the config file
-    match get_values_from_config_file(&args.repo) {
-        Ok(v) => {
-            values = v;
-        }
-        Err(_) => {
-            println!("Config file not found or invalid, creating new config file");
-            values = create_config_file(&args.repo)?;
-        }
-    }
+    // Used across the program to pass the configuration
+    let mut repo_config: RepoConfig = config.get_values_from_config_file(&args.repo)?;
 
     if args.verbose {
-        dbg!(&values);
+        dbg!(&repo_config);
     };
 
     match args.command.unwrap() {
         TreeCommand::List { raw } => {
-            let worktrees = values.list_worktrees(false)?;
+            let worktrees = repo_config.list_worktrees(false)?;
             if raw {
                 for tree in worktrees {
                     println!("{}", &tree.reference);
@@ -118,7 +114,7 @@ fn main() -> Result<()> {
         TreeCommand::Create { branch_name: name } => {
             println!("Creating worktree {}", name);
             let (branch_name, worktree_path) =
-                values.create_worktree(&name, false, args.dry_run)?;
+                repo_config.create_worktree(&name, false, args.dry_run)?;
             println!(
                 "Branch {} created in worktree {}",
                 branch_name, worktree_path
@@ -131,7 +127,7 @@ fn main() -> Result<()> {
                 println!("{}", name);
             }
             for branch in branch_names {
-                match values.delete_worktree(&branch) {
+                match repo_config.delete_worktree(&branch) {
                     Ok(_) => println!("Deleted branch: {}", branch),
                     Err(e) => match e.downcast_ref::<Errors>() {
                         Some(Errors::WorktreeInactive { worktree }) => {
@@ -149,11 +145,11 @@ fn main() -> Result<()> {
         }
         TreeCommand::Update => {
             println!("Updating base worktree");
-            values.update_main_worktree(args.dry_run)
+            repo_config.update_main_worktree(args.dry_run)
         }
         TreeCommand::SetRepo { repo_name } => {
             println!("Setting config value");
-            set_active_repo(repo_name)
+            config.set_active_repo(repo_name)
         }
         TreeCommand::AddRepo {
             repo_name,
@@ -161,13 +157,16 @@ fn main() -> Result<()> {
             base_path,
         } => {
             println!("Adding repository");
-            add_repo(repo_name, base_tree, base_path)
+            config.add_repo(repo_name, base_tree, base_path)
         }
         TreeCommand::DeleteRepo { repo_name } => {
             println!("Deleting repository");
-            delete_repo(repo_name)
+            config.delete_repo(repo_name)
         }
-        TreeCommand::GetRepos => get_repos(),
-        TreeCommand::AddFile { file_path } => add_file(values, &file_path),
+        TreeCommand::GetRepos => {
+            config.get_repos();
+            Ok(())
+        }
+        TreeCommand::AddFile { file_path } => repo_config.add_file(&file_path),
     }
 }
