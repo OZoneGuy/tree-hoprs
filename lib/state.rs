@@ -19,15 +19,22 @@ use ratatui::{
 use crate::config::Config;
 use crate::repo_config::RepoConfig;
 
+#[derive(Default, Debug)]
+pub enum AppState {
+    #[default]
+    Normal,
+    CreateWorktree(String),
+    Quit,
+}
+
 #[derive(Default)]
 pub struct App {
+    state: AppState,
+
     repos: Vec<String>,
     active_repo: usize,
-    end: bool,
     repo_configs: Vec<RepoConfig>,
     selected_row: i16,
-    creating_worktree: bool,
-    create_worktree_branch: String,
 }
 
 impl App {
@@ -37,8 +44,6 @@ impl App {
             Ok(conf) => {
                 let repos = conf.get_repos();
                 app.repos = repos;
-                app.active_repo = 0;
-                app.end = false;
                 app.repo_configs = conf.get_repo_configs();
                 app.selected_row = 0;
                 return Ok(app);
@@ -51,40 +56,25 @@ impl App {
         loop {
             terminal.draw(|frame| frame.render_widget(self.deref(), frame.area()))?;
             self.handle_input()?;
-            if self.end {
+            if let AppState::Quit = self.state {
                 break;
             }
         }
         Ok(())
     }
 
+    /// Handles user input based on state.
+    ///
+    /// Handle user input based on the controls shown in the UI.
+    /// There are two modes. `Normal` and `CreateWorktree`.
+    /// Polls input every 50ms
     fn handle_input(&mut self) -> Result<()> {
-        if event::poll(Duration::from_millis(200)).context("event poll failed")? {
+        if event::poll(Duration::from_millis(50)).context("event poll failed")? {
             if let Event::Key(key) = event::read().context("event read failed")? {
-                if self.creating_worktree {
-                    match key.code {
-                        KeyCode::Esc => {
-                            self.creating_worktree = false;
-                            self.create_worktree_branch = String::with_capacity(128);
-                        }
-                        KeyCode::Char(c) => self.create_worktree_branch.push(c),
-                        KeyCode::Backspace => {
-                            self.create_worktree_branch.pop();
-                        }
-                        KeyCode::Enter => {
-                            self.repo_configs[self.active_repo].create_worktree(
-                                &self.create_worktree_branch,
-                                true,
-                                false,
-                            )?;
-                            self.create_worktree_branch = String::with_capacity(128);
-                            self.creating_worktree = false;
-                        }
-                        _ => (),
-                    }
-                } else {
-                    match key.code {
-                        KeyCode::Char('q') => self.end = true,
+                use AppState::*;
+                match &mut self.state {
+                    Normal => match key.code {
+                        KeyCode::Char('q') => self.state = Quit,
                         KeyCode::Char('l') => self.move_tab(1),
                         KeyCode::Char('h') => self.move_tab(-1),
                         KeyCode::Char('k') => self.move_selected(-1),
@@ -93,7 +83,23 @@ impl App {
                         KeyCode::Char('c') => self.create_worktree()?,
                         KeyCode::Char('u') => self.update_mainworktree()?,
                         _ => (),
-                    }
+                    },
+                    CreateWorktree(name) => match key.code {
+                        KeyCode::Esc => {
+                            self.state = Normal;
+                        }
+                        KeyCode::Char(c) => name.push(c),
+                        KeyCode::Backspace => {
+                            name.pop();
+                        }
+                        KeyCode::Enter => {
+                            self.repo_configs[self.active_repo]
+                                .create_worktree(&name, true, false)?;
+                            self.state = Normal
+                        }
+                        _ => (),
+                    },
+                    Quit => return Ok(()),
                 }
             }
         }
@@ -128,7 +134,7 @@ impl App {
     }
 
     fn create_worktree(&mut self) -> Result<()> {
-        self.creating_worktree = true;
+        self.state = AppState::CreateWorktree(String::new());
         Ok(())
     }
 
@@ -145,7 +151,11 @@ impl App {
         Paragraph::new("Create worktree popup")
             .centered()
             .render(top, buf);
-        Paragraph::new(self.create_worktree_branch.clone())
+        let branch_name = match &self.state {
+            AppState::CreateWorktree(name) => name.clone(),
+            state => panic!("drawing the create pop up in the wrong state: {:?}", state),
+        };
+        Paragraph::new(branch_name)
             .centered()
             .block(
                 Block::bordered()
@@ -242,7 +252,7 @@ impl Widget for &App {
         )
         .render(footer, buf);
 
-        if self.creating_worktree {
+        if let AppState::CreateWorktree(_) = &self.state {
             self.draw_create_popup(area, buf);
         };
     }
