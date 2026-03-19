@@ -12,16 +12,25 @@ use crate::tree_hoprs::Errors;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Configuration for a specific repository with its worktrees and settings.
+///
+/// Stores information about a repository including its base tree, location, and worktrees.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RepoConfig {
+    /// The name identifier for this repository
     pub(crate) repo_name: String,
+    /// The name of the main/base worktree
     pub(crate) base_tree: String,
+    /// The base path where the repository and its worktrees are stored
     pub(crate) base_path: String,
+    /// List of inactive worktree paths (worktrees that have been deleted but paths are preserved for reuse)
     pub(crate) inactive_trees: Vec<String>,
+    /// List of files to be copied when creating new worktrees
     pub(crate) copy_files: Vec<String>,
 }
 
 impl RepoConfig {
+    /// Returns a reference to the list of inactive worktree paths
     pub fn get_inactive_trees(&self) -> &Vec<String> {
         &self.inactive_trees
     }
@@ -53,6 +62,10 @@ impl RepoConfig {
         Ok(trees)
     }
 
+    /// Marks a worktree as inactive by moving it to the inactive_trees list
+    ///
+    /// Finds the worktree by branch name and adds its path to the inactive list.
+    /// Updates the configuration file to persist the changes.
     pub fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
         let worktrees = self.list_worktrees(false)?;
         let result = worktrees
@@ -83,6 +96,10 @@ impl RepoConfig {
         Ok(())
     }
 
+    /// Creates a new worktree for the given branch name
+    ///
+    /// Updates the main worktree, creates a new branch if needed, and sets up the worktree.
+    /// Reuses inactive worktree paths if available. Copies configured files to the new worktree.
     pub fn create_worktree(
         &mut self,
         branch_name: &String,
@@ -165,6 +182,9 @@ impl RepoConfig {
         Ok((branch_name.to_owned(), worktree_path))
     }
 
+    /// Updates the main worktree by pulling the latest changes
+    ///
+    /// Runs `git pull` on the base tree directory.
     pub fn update_main_worktree(&self, _dry_run: bool) -> Result<()> {
         Command::new("git")
             .arg("pull")
@@ -173,6 +193,10 @@ impl RepoConfig {
         Ok(())
     }
 
+    /// Adds a file to the list of files to be copied when creating new worktrees
+    ///
+    /// Verifies that the file exists at the specified path and adds it to the copy_files list.
+    /// Updates the configuration file to persist the changes.
     pub fn add_file(mut self, file_path: &str) -> Result<()> {
         // check that file exists
         let mut full_path = PathBuf::new();
@@ -196,6 +220,21 @@ impl RepoConfig {
     }
 }
 
+/// Creates a WorktreeListing from a git repository
+///
+/// Extracts repository information including the current branch reference and the state of
+/// uncommitted/staged changes. Determines if there are working directory changes, staged changes,
+/// or if the worktree is clean.
+///
+/// # Arguments
+///
+/// * `repo` - A reference to the git2 Repository
+/// * `path` - The file system path of the worktree
+///
+/// # Returns
+///
+/// A Result containing a WorktreeListing with the repository's path, current branch reference,
+/// and local state (Clean, Changes, or Staged). The PR state is initialized as Loading.
 fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeListing> {
     let mut listing: WorktreeListing = WorktreeListing::default();
     listing.path = path;
@@ -235,34 +274,52 @@ fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeL
     return Ok(listing);
 }
 
+/// Represents the state of a pull request associated with a worktree
 #[derive(Default)]
 pub enum PrState {
+    /// Pull request is currently being loaded
     #[default]
     Loading,
+    /// Pull request has been closed
     Closed,
+    /// Pull request is open
     Open,
+    /// Pull request checks are failing
     Failing,
+    /// Review has been requested
     Requested,
+    /// Pull request has been merged
     Merged,
 }
 
+/// Represents the local state of changes in a worktree
 #[derive(Default)]
 pub enum LocalState {
+    /// No uncommitted changes
     #[default]
     Clean,
+    /// Uncommitted changes exist in the working directory
     Changes,
+    /// Changes have been staged for commit
     Staged,
 }
 
+/// Combines pull request and local state information for a worktree
 #[derive(Default)]
 pub struct WorktreeState {
+    /// The state of the associated pull request
     pub pr_state: PrState,
+    /// The local git state of the worktree
     pub local_state: LocalState,
 }
 
+/// Information about a worktree including its path, branch, and state
 #[derive(Default)]
 pub struct WorktreeListing {
+    /// The file system path where the worktree is located
     pub path: String,
+    /// The branch name or reference currently checked out in the worktree
     pub reference: String,
+    /// The combined state of the worktree (PR and local changes)
     pub state: WorktreeState,
 }
