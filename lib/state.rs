@@ -1,10 +1,10 @@
 use std::ops::Deref;
-use std::time::Duration;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
 
 use anyhow::{anyhow, Context, Result};
-use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{self, Event, KeyCode};
-use ratatui::layout::{Constraint, Rect, Spacing};
+use ratatui::layout::{Constraint, Spacing};
 use ratatui::style::{Styled, Stylize};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::{BorderType, Borders, Paragraph, Row, StatefulWidget, Table, TableState};
@@ -18,19 +18,20 @@ use ratatui::{
 
 use crate::config::Config;
 use crate::repo_config::RepoConfig;
+use crate::ui::create_worktree::CreateWorktreeScreen;
+use crate::ui::screen::Screen;
 
-#[derive(Default, Debug)]
-pub enum AppState {
-    #[default]
+pub(crate) enum AppState {
     Normal,
-    CreateWorktree(String),
-    Quit,
+    Quitting,
 }
 
-#[derive(Default)]
 pub struct App {
-    state: AppState,
+    pub(crate) active_screen: Option<Box<dyn Screen>>,
 
+    input_channel: Receiver<Event>,
+
+    pub(crate) state: AppState,
     repos: Vec<String>,
     active_repo: usize,
     repo_configs: Vec<RepoConfig>,
@@ -38,25 +39,46 @@ pub struct App {
 }
 
 impl App {
+    fn start_input_pooling(send: Sender<Event>) {
+        thread::spawn(move || loop {
+            if let Ok(e) = event::read() {
+                send.send(e).unwrap();
+            }
+        });
+    }
+
     pub fn new() -> Result<Self> {
-        let mut app = Self::default();
         match Config::get_config_file() {
             Ok(conf) => {
+                let (send, recv) = channel();
                 let repos = conf.get_repos();
-                app.repos = repos;
-                app.repo_configs = conf.get_repo_configs();
-                app.selected_row = 0;
+                let app = Self {
+                    active_screen: None,
+
+                    input_channel: recv,
+
+                    state: AppState::Normal,
+                    repos,
+                    active_repo: 0,
+                    repo_configs: conf.get_repo_configs(),
+                    selected_row: 0,
+                };
+                App::start_input_pooling(send);
                 return Ok(app);
             }
-            Err(_) => return Ok(app),
+            Err(e) => return Err(anyhow!("Failed to read the config: {}", e)),
         }
+    }
+
+    pub fn get_active_repo(&mut self) -> &mut RepoConfig {
+        self.repo_configs.get_mut(self.active_repo).unwrap()
     }
 
     pub fn render(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         loop {
             terminal.draw(|frame| frame.render_widget(self.deref(), frame.area()))?;
             self.handle_input()?;
-            if let AppState::Quit = self.state {
+            if let AppState::Quitting = self.state {
                 break;
             }
         }
@@ -69,12 +91,21 @@ impl App {
     /// There are two modes. `Normal` and `CreateWorktree`.
     /// Polls input every 50ms
     fn handle_input(&mut self) -> Result<()> {
-        if event::poll(Duration::from_millis(50)).context("event poll failed")? {
-            if let Event::Key(key) = event::read().context("event read failed")? {
-                use AppState::*;
-                match &mut self.state {
-                    Normal => match key.code {
-                        KeyCode::Char('q') => self.state = Quit,
+        if let Ok(user_event) = self.input_channel.recv() {
+            // If in another screen. Let it capture the input.
+            if let Some(mut screen) = self.active_screen.take() {
+                let action = screen.handle_input(self, user_event)?;
+                use crate::ui::screen::ScreenAction::*;
+                match action {
+                    Main => self.active_screen = None,
+                    Stay => self.active_screen = Some(screen),
+                    MoveScreen(s) => self.active_screen = Some(s),
+                }
+            } else {
+                // If not in another screen, then handle the main input.
+                if let Event::Key(key) = user_event {
+                    match key.code {
+                        KeyCode::Char('q') => self.state = AppState::Quitting,
                         KeyCode::Char('l') => self.move_tab(1),
                         KeyCode::Char('h') => self.move_tab(-1),
                         KeyCode::Char('k') => self.move_selected(-1),
@@ -83,23 +114,7 @@ impl App {
                         KeyCode::Char('c') => self.create_worktree()?,
                         KeyCode::Char('u') => self.update_mainworktree()?,
                         _ => (),
-                    },
-                    CreateWorktree(name) => match key.code {
-                        KeyCode::Esc => {
-                            self.state = Normal;
-                        }
-                        KeyCode::Char(c) => name.push(c),
-                        KeyCode::Backspace => {
-                            name.pop();
-                        }
-                        KeyCode::Enter => {
-                            self.repo_configs[self.active_repo]
-                                .create_worktree(&name, true, false)?;
-                            self.state = Normal
-                        }
-                        _ => (),
-                    },
-                    Quit => return Ok(()),
+                    }
                 }
             }
         }
@@ -134,35 +149,8 @@ impl App {
     }
 
     fn create_worktree(&mut self) -> Result<()> {
-        self.state = AppState::CreateWorktree(String::new());
+        self.active_screen = Some(Box::new(CreateWorktreeScreen::default()));
         Ok(())
-    }
-
-    fn draw_create_popup(&self, area: Rect, buf: &mut Buffer) {
-        use Constraint::{Length, Percentage};
-        let center_area = area.centered(Length(64), Length(10));
-        Block::bordered()
-            .border_type(BorderType::Rounded)
-            .on_dark_gray()
-            .title(Line::from("Create worktree").centered())
-            .render(center_area, buf);
-        let [_, top, input_area] =
-            Layout::vertical([Length(2), Length(3), Length(3)]).areas(center_area);
-        Paragraph::new("Create worktree popup")
-            .centered()
-            .render(top, buf);
-        let branch_name = match &self.state {
-            AppState::CreateWorktree(name) => name.clone(),
-            state => panic!("drawing the create pop up in the wrong state: {:?}", state),
-        };
-        Paragraph::new(branch_name)
-            .centered()
-            .block(
-                Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::new().cyan()),
-            )
-            .render(input_area.centered_horizontally(Percentage(75)), buf);
     }
 
     fn update_mainworktree(&self) -> Result<()> {
@@ -252,8 +240,8 @@ impl Widget for &App {
         )
         .render(footer, buf);
 
-        if let AppState::CreateWorktree(_) = &self.state {
-            self.draw_create_popup(area, buf);
+        if let Some(box_screen) = &self.active_screen.as_deref() {
+            box_screen.render(self, area, buf);
         };
     }
 }
