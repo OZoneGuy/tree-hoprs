@@ -1,9 +1,12 @@
 use std::ops::Deref;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use anyhow::{anyhow, Context, Result};
-use ratatui::crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{Event, EventStream, KeyCode};
+use futures::StreamExt;
 use ratatui::layout::{Constraint, Spacing};
 use ratatui::style::{Styled, Stylize};
 use ratatui::symbols::merge::MergeStrategy;
@@ -15,15 +18,20 @@ use ratatui::{
     text::Line,
     widgets::{Block, Tabs, Widget},
 };
+use tokio::time::sleep;
+use tokio::{select, spawn};
 
 use crate::config::Config;
 use crate::repo_config::RepoConfig;
 use crate::ui::create_worktree::CreateWorktreeScreen;
+use crate::ui::loading::Loading;
 use crate::ui::screen::Screen;
 
+#[repr(u8)]
 pub(crate) enum AppState {
-    Normal,
-    Quitting,
+    Normal = 0,
+    Loading = 1,
+    Quitting = 2,
 }
 
 pub struct App {
@@ -31,7 +39,7 @@ pub struct App {
 
     input_channel: Receiver<Event>,
 
-    pub(crate) state: AppState,
+    pub(crate) state: Arc<AtomicU8>,
     repos: Vec<String>,
     active_repo: usize,
     repo_configs: Vec<RepoConfig>,
@@ -40,9 +48,13 @@ pub struct App {
 
 impl App {
     fn start_input_pooling(send: Sender<Event>) {
-        thread::spawn(move || loop {
-            if let Ok(e) = event::read() {
-                send.send(e).unwrap();
+        spawn(async move {
+            let mut reader = EventStream::new();
+            loop {
+                if let Some(Ok(e)) = reader.next().await {
+                    // XXX: Handle result
+                    send.send(e).await.unwrap();
+                }
             }
         });
     }
@@ -50,14 +62,14 @@ impl App {
     pub fn new() -> Result<Self> {
         match Config::get_config_file() {
             Ok(conf) => {
-                let (send, recv) = channel();
+                let (send, recv) = channel(2);
                 let repos = conf.get_repos();
                 let app = Self {
                     active_screen: None,
 
                     input_channel: recv,
 
-                    state: AppState::Normal,
+                    state: Arc::new(AtomicU8::new(AppState::Normal as u8)),
                     repos,
                     active_repo: 0,
                     repo_configs: conf.get_repo_configs(),
@@ -70,19 +82,26 @@ impl App {
         }
     }
 
-    pub fn get_active_repo(&mut self) -> &mut RepoConfig {
-        self.repo_configs.get_mut(self.active_repo).unwrap()
+    pub fn get_active_repo(&mut self) -> Arc<&RepoConfig> {
+        Arc::new(self.repo_configs.get(self.active_repo).unwrap())
     }
 
-    pub fn render(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
+    pub async fn render(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
         loop {
+            if AppState::Quitting as u8 == self.state.as_ref().load(Ordering::Relaxed) {
+                println!("quitting");
+                return Ok(());
+            }
             terminal.draw(|frame| frame.render_widget(self.deref(), frame.area()))?;
-            self.handle_input()?;
-            if let AppState::Quitting = self.state {
-                break;
+            select! {
+                res = self.input_channel.recv() => {
+                    if let Some(event) = res {
+                        self.handle_input(event).await?;
+                    }
+                },
+                _ = sleep(Duration::from_millis(20)) => {},
             }
         }
-        Ok(())
     }
 
     /// Handles user input based on state.
@@ -90,31 +109,48 @@ impl App {
     /// Handle user input based on the controls shown in the UI.
     /// There are two modes. `Normal` and `CreateWorktree`.
     /// Polls input every 50ms
-    fn handle_input(&mut self) -> Result<()> {
-        if let Ok(user_event) = self.input_channel.recv() {
-            // If in another screen. Let it capture the input.
-            if let Some(mut screen) = self.active_screen.take() {
-                let action = screen.handle_input(self, user_event)?;
-                use crate::ui::screen::ScreenAction::*;
-                match action {
-                    Main => self.active_screen = None,
-                    Stay => self.active_screen = Some(screen),
-                    MoveScreen(s) => self.active_screen = Some(s),
-                }
-            } else {
-                // If not in another screen, then handle the main input.
-                if let Event::Key(key) = user_event {
-                    match key.code {
-                        KeyCode::Char('q') => self.state = AppState::Quitting,
-                        KeyCode::Char('l') => self.move_tab(1),
-                        KeyCode::Char('h') => self.move_tab(-1),
-                        KeyCode::Char('k') => self.move_selected(-1),
-                        KeyCode::Char('j') => self.move_selected(1),
-                        KeyCode::Char('d') => self.delete_worktree()?,
-                        KeyCode::Char('c') => self.create_worktree()?,
-                        KeyCode::Char('u') => self.update_mainworktree()?,
-                        _ => (),
+    async fn handle_input(&mut self, user_event: Event) -> Result<()> {
+        // If loading block all input, except for quitting
+        if AppState::Loading as u8 == self.state.as_ref().load(Ordering::Relaxed) {
+            if let Event::Key(key) = user_event {
+                match key.code {
+                    KeyCode::Char('q') => {
+                        self.state
+                            .as_ref()
+                            .store(AppState::Quitting as u8, Ordering::Relaxed);
                     }
+                    _ => (),
+                }
+            }
+            return Ok(());
+        }
+
+        // If in another screen. Let it capture the input.
+        if let Some(mut screen) = self.active_screen.take() {
+            let action = screen.handle_input(self, user_event).await?;
+            use crate::ui::screen::ScreenAction::*;
+            match action {
+                Main => self.active_screen = None,
+                Stay => self.active_screen = Some(screen),
+                MoveScreen(s) => self.active_screen = Some(s),
+            }
+        } else {
+            // If not in another screen, then handle the main input.
+            if let Event::Key(key) = user_event {
+                match key.code {
+                    KeyCode::Char('q') => {
+                        self.state
+                            .as_ref()
+                            .store(AppState::Quitting as u8, Ordering::Relaxed);
+                    }
+                    KeyCode::Char('l') => self.move_tab(1),
+                    KeyCode::Char('h') => self.move_tab(-1),
+                    KeyCode::Char('k') => self.move_selected(-1),
+                    KeyCode::Char('j') => self.move_selected(1),
+                    KeyCode::Char('d') => self.delete_worktree()?,
+                    KeyCode::Char('c') => self.create_worktree()?,
+                    KeyCode::Char('u') => self.update_mainworktree()?,
+                    _ => (),
                 }
             }
         }
@@ -154,7 +190,14 @@ impl App {
     }
 
     fn update_mainworktree(&self) -> Result<()> {
-        self.repo_configs[self.active_repo].update_main_worktree(false)
+        let repo = self.repo_configs[self.active_repo].clone();
+        let state = self.state.clone();
+        spawn(async move {
+            state.store(AppState::Loading as u8, Ordering::Relaxed);
+            repo.clone().update_main_worktree(false).await.unwrap();
+            state.store(AppState::Normal as u8, Ordering::Relaxed);
+        });
+        Ok(())
     }
 }
 
@@ -243,5 +286,10 @@ impl Widget for &App {
         if let Some(box_screen) = &self.active_screen.as_deref() {
             box_screen.render(self, area, buf);
         };
+
+        if AppState::Loading as u8 == self.state.load(Ordering::Acquire) {
+            let loading_area = area.centered(Constraint::Length(10), Constraint::Length(10));
+            Loading::render(&Loading {}, self, loading_area, buf)
+        }
     }
 }

@@ -100,13 +100,13 @@ impl RepoConfig {
     ///
     /// Updates the main worktree, creates a new branch if needed, and sets up the worktree.
     /// Reuses inactive worktree paths if available. Copies configured files to the new worktree.
-    pub fn create_worktree(
+    pub async fn create_worktree(
         &mut self,
         branch_name: &String,
         _silent: bool,
         _dry_run: bool,
     ) -> Result<(String, String)> {
-        self.update_main_worktree(false)?;
+        self.update_main_worktree(false).await?;
 
         let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
         // Create branch if it doesn't exist
@@ -185,7 +185,7 @@ impl RepoConfig {
     /// Updates the main worktree by pulling the latest changes
     ///
     /// Runs `git pull` on the base tree directory.
-    pub fn update_main_worktree(&self, _dry_run: bool) -> Result<()> {
+    pub async fn update_main_worktree(&self, _dry_run: bool) -> Result<()> {
         Command::new("git")
             .arg("pull")
             .current_dir(format!("{}/{}", self.base_path, self.base_tree))

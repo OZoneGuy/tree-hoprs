@@ -1,3 +1,8 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use anyhow::Result;
 use ratatui::{
     crossterm::event::{Event, KeyCode},
@@ -6,14 +11,20 @@ use ratatui::{
     text::Line,
     widgets::{Block, BorderType, Paragraph, Widget},
 };
+use tokio::spawn;
 
-use crate::ui::screen::{Screen, ScreenAction};
+use crate::ui::{
+    loading::Loading,
+    screen::{Screen, ScreenAction},
+};
 
 #[derive(Default)]
 pub struct CreateWorktreeScreen {
     name: String,
+    loading: Arc<AtomicBool>,
 }
 
+#[async_trait::async_trait]
 impl Screen for CreateWorktreeScreen {
     fn render(
         &self,
@@ -34,17 +45,26 @@ impl Screen for CreateWorktreeScreen {
             .centered()
             .render(top, buf);
         let branch_name = self.name.clone();
-        Paragraph::new(branch_name)
-            .centered()
-            .block(
-                Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::new().cyan()),
-            )
-            .render(input_area.centered_horizontally(Percentage(75)), buf);
+        let __input_area = input_area.centered_horizontally(Percentage(75));
+        if self.loading.load(Ordering::Relaxed) {
+            Loading::render(&Loading {}, _app, __input_area, buf);
+        } else {
+            Paragraph::new(branch_name)
+                .centered()
+                .block(
+                    Block::bordered()
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::new().cyan()),
+                )
+                .render(__input_area, buf);
+        }
     }
 
-    fn handle_input(&mut self, app: &mut crate::state::App, event: Event) -> Result<ScreenAction> {
+    async fn handle_input(
+        &mut self,
+        app: &mut crate::state::App,
+        event: Event,
+    ) -> Result<ScreenAction> {
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Esc => {
@@ -55,8 +75,16 @@ impl Screen for CreateWorktreeScreen {
                     self.name.pop();
                 }
                 KeyCode::Enter => {
-                    app.get_active_repo()
-                        .create_worktree(&self.name, true, false)?;
+                    let repo = app.get_active_repo().clone();
+                    let load_state = self.loading.clone();
+                    let branch_name = self.name.clone();
+                    spawn(async move {
+                        load_state.store(true, Ordering::Relaxed);
+                        repo.create_worktree(&branch_name, true, false)
+                            .await
+                            .unwrap();
+                        load_state.store(false, Ordering::Relaxed);
+                    });
                     return Ok(ScreenAction::Main);
                 }
                 _ => (),
