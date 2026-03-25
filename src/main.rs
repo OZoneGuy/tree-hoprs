@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
 
     match args.command.unwrap() {
         TreeCommand::List { raw } => {
-            let worktrees = repo_config.list_worktrees(false)?;
+            let worktrees = repo_config.list_worktrees(false).await?;
             if raw {
                 for tree in worktrees {
                     println!("{}", &tree.reference);
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
                 println!("{}", name);
             }
             for branch in branch_names {
-                match repo_config.delete_worktree(&branch) {
+                match repo_config.delete_worktree(&branch).await {
                     Ok(_) => println!("Deleted branch: {}", branch),
                     Err(e) => match e.downcast_ref::<Errors>() {
                         Some(Errors::WorktreeInactive { worktree }) => {

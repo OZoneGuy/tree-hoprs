@@ -1,11 +1,11 @@
 use std::{
     fs::{self, copy},
     path::{self, Path},
-    process::Command,
 };
 
 use git2::{build::CheckoutBuilder, Repository, WorktreeAddOptions};
 use path::PathBuf;
+use tokio::{process::Command, task::spawn_blocking};
 
 use crate::config::Config;
 use crate::tree_hoprs::Errors;
@@ -39,35 +39,39 @@ impl RepoConfig {
     ///
     /// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
     /// strings. The first item is the worktree path, and the second item is the branch name.
-    pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<WorktreeListing>> {
+    pub async fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<WorktreeListing>> {
         // Get listt of worktrees
         let base_path = format!("{}/{}", self.base_path, self.base_tree);
-        let repo = Repository::open(&base_path)?;
-        let mut trees = Vec::new();
+        let inactive_trees = self.inactive_trees.clone();
+        spawn_blocking(move || {
+            let repo = Repository::open(&base_path)?;
+            let mut trees = Vec::new();
 
-        // Add the base tree
-        trees.push(create_listing_from_repo(&repo, base_path)?);
+            // Add the base tree
+            trees.push(create_listing_from_repo(&repo, base_path)?);
 
-        // filter out worktrees in inactive list
-        for tree_name in repo.worktrees()?.iter() {
-            let worktree = repo.find_worktree(tree_name.unwrap())?;
-            let path = worktree.path().to_str().unwrap().to_owned();
-            if !include_inactive && self.inactive_trees.contains(&path) {
-                continue;
+            // filter out worktrees in inactive list
+            for tree_name in repo.worktrees()?.iter() {
+                let worktree = repo.find_worktree(tree_name.unwrap())?;
+                let path = worktree.path().to_str().unwrap().to_owned();
+                if !include_inactive && inactive_trees.contains(&path) {
+                    continue;
+                }
+                let worktree_repo =
+                    Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
+                trees.push(create_listing_from_repo(&worktree_repo, path)?);
             }
-            let worktree_repo =
-                Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
-            trees.push(create_listing_from_repo(&worktree_repo, path)?);
-        }
-        Ok(trees)
+            Ok(trees)
+        })
+        .await?
     }
 
     /// Marks a worktree as inactive by moving it to the inactive_trees list
     ///
     /// Finds the worktree by branch name and adds its path to the inactive list.
     /// Updates the configuration file to persist the changes.
-    pub fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
-        let worktrees = self.list_worktrees(false)?;
+    pub async fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
+        let worktrees = self.list_worktrees(false).await?;
         let result = worktrees
             .iter()
             .find(|listing| listing.reference == branch_name);
@@ -189,7 +193,8 @@ impl RepoConfig {
         Command::new("git")
             .arg("pull")
             .current_dir(format!("{}/{}", self.base_path, self.base_tree))
-            .output()?;
+            .output()
+            .await?;
         Ok(())
     }
 
@@ -197,7 +202,8 @@ impl RepoConfig {
     ///
     /// Verifies that the file exists at the specified path and adds it to the copy_files list.
     /// Updates the configuration file to persist the changes.
-    pub fn add_file(mut self, file_path: &str) -> Result<()> {
+    /// XXX: This most likely does not behave as intended. Does not save the data to disk.
+    pub fn add_file(&mut self, file_path: &str) -> Result<()> {
         // check that file exists
         let mut full_path = PathBuf::new();
         full_path.push(self.base_tree.clone());
@@ -213,9 +219,6 @@ impl RepoConfig {
             return Err(anyhow!("File does not exist"));
         }
         self.copy_files.push(path_string.into());
-
-        let mut config = Config::get_config_file()?;
-        config.repo.insert(self.repo_name.clone(), self);
         Ok(())
     }
 }
