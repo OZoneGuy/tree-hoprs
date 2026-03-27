@@ -1,9 +1,6 @@
 use std::time;
 
-use ratatui::{
-    text::Line,
-    widgets::{Clear, Widget},
-};
+use ratatui::{layout::Constraint, text::Line, widgets::Widget};
 
 use crate::ui::screen::Screen;
 
@@ -27,8 +24,10 @@ impl Screen for Loading {
             .unwrap()
             .as_millis();
         let index: usize = ((millis_time as usize) / 100) % SPINNER_FRAMES.len();
-        Clear.render(area, buf);
-        Line::from(SPINNER_FRAMES[index]).render(area, buf);
+        Line::from(SPINNER_FRAMES[index]).render(
+            area.centered(Constraint::Length(2), Constraint::Length(2)),
+            buf,
+        );
     }
 
     async fn handle_input(
