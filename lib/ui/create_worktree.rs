@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use ratatui::{
     crossterm::event::{Event, KeyCode},
     layout::{Constraint, Layout},
@@ -11,14 +11,14 @@ use ratatui::{
     text::Line,
     widgets::{Block, BorderType, Paragraph, Widget},
 };
-use tokio::{
-    spawn,
-    sync::mpsc::{channel, error::TryRecvError, Receiver},
-};
+use tokio::{spawn, sync::mpsc::Sender};
 
-use crate::ui::{
-    loading::Loading,
-    screen::{Screen, ScreenAction},
+use crate::{
+    state::AppEvent,
+    ui::{
+        loading::Loading,
+        screen::{Screen, ScreenAction},
+    },
 };
 
 #[derive(Debug)]
@@ -26,15 +26,15 @@ pub struct CreateWorktreeScreen {
     name: String,
     loading: Arc<AtomicBool>,
 
-    loading_signal: Option<Arc<Receiver<LoadingRes>>>,
+    sender: Sender<AppEvent>,
 }
 
 impl CreateWorktreeScreen {
-    pub fn new() -> Self {
+    pub fn new(sender: Sender<AppEvent>) -> Self {
         CreateWorktreeScreen {
             name: String::new(),
             loading: Arc::new(AtomicBool::new(false)),
-            loading_signal: None,
+            sender,
         }
     }
 }
@@ -80,24 +80,6 @@ impl Screen for CreateWorktreeScreen {
         app: &mut crate::state::App,
         event: Event,
     ) -> Result<ScreenAction> {
-        if let Some(recv) = self.loading_signal {
-            match recv.try_recv() {
-                // Finished action
-                Ok(state) => {
-                    if let LoadingRes::Ready(action) = state {
-                        self.loading.store(false, Ordering::Relaxed);
-                        return Ok(action);
-                    }
-                }
-                // Still loading
-                Err(TryRecvError::Empty) => return Ok(ScreenAction::Stay),
-                Err(err) => {
-                    return Err(anyhow!(
-                        "tried reading channel after disconnect in create dialogue"
-                    ))
-                }
-            }
-        }
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Esc => {
@@ -112,13 +94,19 @@ impl Screen for CreateWorktreeScreen {
                     let branch_name = self.name.clone();
                     self.loading.store(true, Ordering::Relaxed);
                     let loadin_state = self.loading.clone();
+                    let sender = self.sender.clone();
                     spawn(async move {
-                        repo.write()
-                            .await
+                        let mut new_repo = repo.read().await.clone();
+                        new_repo
                             .create_worktree(&branch_name, true, false)
                             .await
                             .unwrap();
-                        let (tx, recv) = channel::<LoadingRes>(2);
+                        sender.send(AppEvent::UpdateRepo(new_repo)).await.unwrap();
+                        loadin_state.store(false, Ordering::Relaxed);
+                        sender
+                            .send(AppEvent::SwitchScreen(ScreenAction::Main))
+                            .await
+                            .unwrap();
                     });
                 }
                 _ => (),

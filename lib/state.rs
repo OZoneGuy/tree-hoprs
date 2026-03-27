@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::repo_config::RepoConfig;
 use crate::ui::create_worktree::CreateWorktreeScreen;
 use crate::ui::main::AppWidget;
-use crate::ui::screen::Screen;
+use crate::ui::screen::{Screen, ScreenAction};
 
 #[repr(u8)]
 pub enum AppState {
@@ -33,6 +33,25 @@ impl AppState {
             _ => Err(anyhow!("u8 outside of enum range")),
         }
     }
+}
+
+/// The application tick rate in ms.
+const TICK_RATE: u64 = 50;
+
+/// An enum to send events to the main controll, `App`, to trigger application events. All events
+/// should trigger a redraw of the screen. Sent to the main controller via an mpsc Transmitter.
+#[derive(Debug)]
+pub enum AppEvent {
+    /// Normal periodic tick to draw the screen.
+    Tick,
+    /// Input events.
+    Input(Event),
+    /// Switch active screen
+    SwitchScreen(ScreenAction),
+    /// Update the active repoconfig.
+    UpdateRepo(RepoConfig),
+    /// Quit signal
+    Quit,
 }
 
 type SyncRepoConfig = Arc<RwLock<RepoConfig>>;
@@ -53,27 +72,16 @@ pub struct App {
 }
 
 impl App {
-    fn start_input_pooling(send: Sender<Event>) {
-        spawn(async move {
-            let mut reader = EventStream::new();
-            loop {
-                if let Some(Ok(e)) = reader.next().await {
-                    // XXX: Handle result
-                    send.send(e).await.unwrap();
-                }
-            }
-        });
-    }
-
     pub fn new() -> Result<Self> {
         match Config::get_config_file() {
             Ok(conf) => {
-                let (send, recv) = channel(2);
+                let (tx, recv) = channel(4);
                 let repos = conf.get_repos();
                 let app = Self {
                     active_screen: None,
 
                     input_channel: recv,
+                    transmitter: tx,
 
                     state: Arc::new(AtomicU8::new(AppState::Normal as u8)),
                     repos,
@@ -85,7 +93,6 @@ impl App {
                         .collect(),
                     selected_row: 0,
                 };
-                App::start_input_pooling(send);
                 return Ok(app);
             }
             Err(e) => return Err(anyhow!("Failed to read the config: {}", e)),
@@ -97,21 +104,47 @@ impl App {
     }
 
     pub async fn render(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        let ticker_tx = self.transmitter.clone();
+
+        // Background task to trigger render ticks and user input events
+        spawn(async move {
+            let mut reader = EventStream::new();
+            loop {
+                select! {
+                    user_event = reader.next() => {
+                        if let Some(Ok(e)) = user_event {
+                            ticker_tx.send(AppEvent::Input(e)).await.unwrap();
+                        }
+                    },
+                    _ = sleep(Duration::from_millis(TICK_RATE)) => ticker_tx.send(AppEvent::Tick).await.unwrap(),
+                };
+            }
+        });
+
         loop {
-            if AppState::Quitting as u8 == self.state.as_ref().load(Ordering::Relaxed) {
-                println!("quitting");
-                return Ok(());
-            }
-            let widget = AppWidget::from_app(self).await?;
-            terminal.draw(|frame| frame.render_widget(&widget, frame.area()))?;
-            select! {
-                res = self.input_channel.recv() => {
-                    if let Some(event) = res {
-                        self.handle_input(event).await?;
+            if let Some(e) = self.input_channel.recv().await {
+                // println!("event: {:?}", e);
+                match e {
+                    AppEvent::Input(input_event) => self.handle_input(input_event).await?,
+                    AppEvent::Quit => {
+                        println!("quitting");
+                        return Ok(());
                     }
-                },
-                _ = sleep(Duration::from_millis(20)) => {},
-            }
+                    AppEvent::SwitchScreen(action) => match action {
+                        ScreenAction::Main => self.active_screen = None,
+                        ScreenAction::MoveScreen(new_screen) => {
+                            self.active_screen = Some(new_screen)
+                        }
+                        ScreenAction::Stay => (),
+                    },
+                    AppEvent::UpdateRepo(new_config) => {
+                        self.repo_configs[self.active_repo] = Arc::new(RwLock::new(new_config))
+                    }
+                    AppEvent::Tick => (),
+                };
+                let widget = AppWidget::from_app(self).await?;
+                terminal.draw(|frame| frame.render_widget(&widget, frame.area()))?;
+            };
         }
     }
 
@@ -150,9 +183,9 @@ impl App {
             if let Event::Key(key) = user_event {
                 match key.code {
                     KeyCode::Char('q') => {
-                        self.state
-                            .as_ref()
-                            .store(AppState::Quitting as u8, Ordering::Relaxed);
+                        println!("sending quit event");
+                        self.transmitter.send(AppEvent::Quit).await.unwrap();
+                        println!("Sent quit event");
                     }
                     KeyCode::Char('l') => self.move_tab(1),
                     KeyCode::Char('h') => self.move_tab(-1),
@@ -204,20 +237,20 @@ impl App {
     }
 
     fn create_worktree(&mut self) -> Result<()> {
-        self.active_screen = Some(Box::new(CreateWorktreeScreen::new()));
+        self.active_screen = Some(Box::new(CreateWorktreeScreen::new(
+            self.transmitter.clone(),
+        )));
         Ok(())
     }
 
     fn update_mainworktree(&self) -> Result<()> {
         let repo = self.repo_configs[self.active_repo].clone();
         let state = self.state.clone();
+        let sender = self.transmitter.clone();
+        state.store(AppState::Loading as u8, Ordering::Relaxed);
         spawn(async move {
-            state.store(AppState::Loading as u8, Ordering::Relaxed);
-            repo.write()
-                .await
-                .update_main_worktree(false)
-                .await
-                .unwrap();
+            repo.read().await.update_main_worktree(false).await.unwrap();
+            sender.send(AppEvent::Tick).await.unwrap();
             state.store(AppState::Normal as u8, Ordering::Relaxed);
         });
         Ok(())
