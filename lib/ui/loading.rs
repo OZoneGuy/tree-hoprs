@@ -9,6 +9,7 @@ use crate::ui::screen::Screen;
 
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+#[derive(Debug)]
 pub struct Loading {}
 
 impl Loading {}

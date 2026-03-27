@@ -21,10 +21,7 @@ use crate::ui::{
     screen::{Screen, ScreenAction},
 };
 
-enum LoadingRes {
-    Ready(ScreenAction),
-}
-
+#[derive(Debug)]
 pub struct CreateWorktreeScreen {
     name: String,
     loading: Arc<AtomicBool>,
