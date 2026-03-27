@@ -14,7 +14,7 @@ use crate::repo_config::RepoConfig;
 pub struct Config {
     /// A map of repository names to their configurations.
     #[serde(rename = "repositories")]
-    pub(crate) repo: HashMap<String, RepoConfig>,
+    pub repo: HashMap<String, RepoConfig>,
     /// The name of the currently active repository.
     #[serde(rename = "active_repository")]
     active_repo: String,

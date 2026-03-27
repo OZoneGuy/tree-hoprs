@@ -66,7 +66,9 @@ enum TreeCommand {
         file_path: String,
     },
 }
-fn main() -> Result<()> {
+
+#[tokio::main(worker_threads = 2)]
+async fn main() -> Result<()> {
     let args = Args::parse();
     if args.verbose {
         dbg!(&args);
@@ -75,7 +77,7 @@ fn main() -> Result<()> {
     if args.command.is_none() {
         let mut app = App::new()?;
         let terminal = ratatui::init();
-        let app_res = app.render(terminal);
+        let app_res = app.render(terminal).await;
         ratatui::restore();
         return app_res;
     }
@@ -94,7 +96,7 @@ fn main() -> Result<()> {
 
     match args.command.unwrap() {
         TreeCommand::List { raw } => {
-            let worktrees = repo_config.list_worktrees(false)?;
+            let worktrees = repo_config.list_worktrees(false).await?;
             if raw {
                 for tree in worktrees {
                     println!("{}", &tree.reference);
@@ -113,8 +115,9 @@ fn main() -> Result<()> {
         }
         TreeCommand::Create { branch_name: name } => {
             println!("Creating worktree {}", name);
-            let (branch_name, worktree_path) =
-                repo_config.create_worktree(&name, false, args.dry_run)?;
+            let (branch_name, worktree_path) = repo_config
+                .create_worktree(&name, false, args.dry_run)
+                .await?;
             println!(
                 "Branch {} created in worktree {}",
                 branch_name, worktree_path
@@ -127,7 +130,7 @@ fn main() -> Result<()> {
                 println!("{}", name);
             }
             for branch in branch_names {
-                match repo_config.delete_worktree(&branch) {
+                match repo_config.delete_worktree(&branch).await {
                     Ok(_) => println!("Deleted branch: {}", branch),
                     Err(e) => match e.downcast_ref::<Errors>() {
                         Some(Errors::WorktreeInactive { worktree }) => {
@@ -145,7 +148,7 @@ fn main() -> Result<()> {
         }
         TreeCommand::Update => {
             println!("Updating base worktree");
-            repo_config.update_main_worktree(args.dry_run)
+            repo_config.update_main_worktree(args.dry_run).await
         }
         TreeCommand::SetRepo { repo_name } => {
             println!("Setting config value");
