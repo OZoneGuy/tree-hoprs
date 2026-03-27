@@ -16,7 +16,7 @@ use ratatui::{
     widgets::{Block, Tabs, Widget},
 };
 
-pub(crate) struct AppWidget<'a> {
+pub struct AppWidget<'a> {
     state: AppState,
 
     repos: Vec<String>,
@@ -29,7 +29,7 @@ pub(crate) struct AppWidget<'a> {
 }
 
 impl<'a> AppWidget<'a> {
-    pub(crate) async fn from_app(app: &'a App) -> Result<Self> {
+    pub async fn from_app(app: &'a App) -> Result<Self> {
         let worktrees = app
             .get_active_repo()
             .read()

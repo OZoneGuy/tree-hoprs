@@ -18,15 +18,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct RepoConfig {
     /// The name identifier for this repository
-    pub(crate) repo_name: String,
+    pub repo_name: String,
     /// The name of the main/base worktree
-    pub(crate) base_tree: String,
+    pub base_tree: String,
     /// The base path where the repository and its worktrees are stored
-    pub(crate) base_path: String,
+    pub base_path: String,
     /// List of inactive worktree paths (worktrees that have been deleted but paths are preserved for reuse)
-    pub(crate) inactive_trees: Vec<String>,
+    pub inactive_trees: Vec<String>,
     /// List of files to be copied when creating new worktrees
-    pub(crate) copy_files: Vec<String>,
+    pub copy_files: Vec<String>,
 }
 
 impl RepoConfig {

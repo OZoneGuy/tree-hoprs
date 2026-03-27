@@ -18,7 +18,7 @@ use crate::ui::main::AppWidget;
 use crate::ui::screen::Screen;
 
 #[repr(u8)]
-pub(crate) enum AppState {
+pub enum AppState {
     Normal,
     Loading,
     Quitting,
@@ -38,15 +38,18 @@ impl AppState {
 type SyncRepoConfig = Arc<RwLock<RepoConfig>>;
 
 pub struct App {
-    pub(crate) active_screen: Option<Box<dyn Screen>>,
+    pub active_screen: Option<Box<dyn Screen>>,
 
-    input_channel: Receiver<Event>,
+    /// The transmitter. Passed to other components to pass events to the main app
+    pub transmitter: Sender<AppEvent>,
+    /// Internal reciever. The receiver for `transmitter`. Not passed and read internally only.
+    input_channel: Receiver<AppEvent>,
 
-    pub(crate) state: Arc<AtomicU8>,
-    pub(crate) repos: Vec<String>,
-    pub(crate) active_repo: usize,
-    pub(crate) repo_configs: Vec<SyncRepoConfig>,
-    pub(crate) selected_row: isize,
+    pub state: Arc<AtomicU8>,
+    pub repos: Vec<String>,
+    pub active_repo: usize,
+    pub repo_configs: Vec<SyncRepoConfig>,
+    pub selected_row: isize,
 }
 
 impl App {
