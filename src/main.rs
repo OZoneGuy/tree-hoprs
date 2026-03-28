@@ -6,13 +6,16 @@ use lib::config::Config;
 use lib::repo_config::RepoConfig;
 use lib::state::App;
 use lib::tree_hoprs::*;
+use log::{debug, error, info, trace, warn, LevelFilter};
+use rolling_file::{BasicRollingFileAppender, RollingConditionBasic};
+use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, WriteLogger};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Verbose output
-    #[arg(short, long)]
-    verbose: bool,
+    #[arg(short = 'v', action = clap::ArgAction::Count)]
+    verbosity: u8,
     /// Don't actually do anything, just print the commands
     #[arg(short, long)]
     dry_run: bool,
@@ -69,19 +72,46 @@ enum TreeCommand {
 
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
+    let mut config_builder = ConfigBuilder::new();
+    config_builder
+        .set_location_level(LevelFilter::Debug)
+        .set_time_level(LevelFilter::Off);
+
     let args = Args::parse();
-    if args.verbose {
-        dbg!(&args);
-    }
+
+    let level: LevelFilter;
+    match args.verbosity {
+        0 => level = LevelFilter::Info,
+        1 => level = LevelFilter::Debug,
+        _ => level = LevelFilter::Trace,
+    };
 
     if args.command.is_none() {
+        let rotate_file = BasicRollingFileAppender::new(
+            "/var/log/tree-hoprs.log",
+            RollingConditionBasic::new().max_size(1_000_000),
+            1,
+        )?;
+        WriteLogger::init(level, config_builder.build(), rotate_file)?;
+        debug!("args = {:?}", &args);
+        trace!("starting the application");
         let mut app = App::new()?;
+        trace!("Getting the terminal object");
         let terminal = ratatui::init();
+        trace!("started the tui");
         let app_res = app.render(terminal).await;
         ratatui::restore();
         return app_res;
     }
+    TermLogger::init(
+        level,
+        config_builder.build(),
+        TerminalMode::Stderr,
+        ColorChoice::Always,
+    )?;
+    debug!("args = {:?}", &args);
 
+    trace!("loading config");
     let mut config: Config = match Config::get_config_file() {
         Ok(c) => c,
         Err(_) => Config::create_config_file(&args.repo)?,
@@ -90,14 +120,13 @@ async fn main() -> Result<()> {
     // Used across the program to pass the configuration
     let mut repo_config: RepoConfig = config.get_values_from_config_file(&args.repo)?;
 
-    if args.verbose {
-        dbg!(&repo_config);
-    };
+    debug!("using config: {:?}", &repo_config);
 
     match args.command.unwrap() {
         TreeCommand::List { raw } => {
             let worktrees = repo_config.list_worktrees(false).await?;
             if raw {
+                debug!("listing wortrees in raw mode");
                 for tree in worktrees {
                     println!("{}", &tree.reference);
                 }
@@ -114,32 +143,32 @@ async fn main() -> Result<()> {
             Ok(())
         }
         TreeCommand::Create { branch_name: name } => {
-            println!("Creating worktree {}", name);
+            info!("Creating worktree {}", name);
             let (branch_name, worktree_path) = repo_config
                 .create_worktree(&name, false, args.dry_run)
                 .await?;
-            println!(
+            info!(
                 "Branch {} created in worktree {}",
                 branch_name, worktree_path
             );
             Ok(())
         }
         TreeCommand::Delete { branch_names } => {
-            println!("Deleting worktres:");
+            info!("Deleting worktres:");
             for name in &branch_names {
-                println!("{}", name);
+                info!("{}", name);
             }
             for branch in branch_names {
                 match repo_config.delete_worktree(&branch).await {
-                    Ok(_) => println!("Deleted branch: {}", branch),
+                    Ok(_) => info!("Deleted branch: {}", branch),
                     Err(e) => match e.downcast_ref::<Errors>() {
                         Some(Errors::WorktreeInactive { worktree }) => {
-                            println!("Worktree already inactive: {}", worktree)
+                            warn!("Worktree already inactive: {}", worktree)
                         }
                         Some(Errors::WorktreeDoesNotExist { worktree }) => {
-                            println!("Worktree does not exist {}", worktree);
+                            warn!("Worktree does not exist {}", worktree);
                         }
-                        Some(Errors::NoRemote) => println!("Remote does not exist"),
+                        Some(Errors::NoRemote) => error!("Remote does not exist"),
                         None => return Err(e),
                     },
                 };
@@ -147,11 +176,11 @@ async fn main() -> Result<()> {
             Ok(())
         }
         TreeCommand::Update => {
-            println!("Updating base worktree");
+            info!("Updating base worktree");
             repo_config.update_main_worktree(args.dry_run).await
         }
         TreeCommand::SetRepo { repo_name } => {
-            println!("Setting config value");
+            info!("Setting config value");
             config.set_active_repo(repo_name)
         }
         TreeCommand::AddRepo {
@@ -159,11 +188,11 @@ async fn main() -> Result<()> {
             base_tree,
             base_path,
         } => {
-            println!("Adding repository");
+            info!("Adding repository");
             config.add_repo(repo_name, base_tree, base_path)
         }
         TreeCommand::DeleteRepo { repo_name } => {
-            println!("Deleting repository");
+            info!("Deleting repository");
             config.delete_repo(repo_name)
         }
         TreeCommand::GetRepos => {
