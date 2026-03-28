@@ -123,11 +123,9 @@ impl App {
 
         loop {
             if let Some(e) = self.input_channel.recv().await {
-                // println!("event: {:?}", e);
                 match e {
                     AppEvent::Input(input_event) => self.handle_input(input_event).await?,
                     AppEvent::Quit => {
-                        println!("quitting");
                         return Ok(());
                     }
                     AppEvent::SwitchScreen(action) => match action {
@@ -183,9 +181,7 @@ impl App {
             if let Event::Key(key) = user_event {
                 match key.code {
                     KeyCode::Char('q') => {
-                        println!("sending quit event");
                         self.transmitter.send(AppEvent::Quit).await.unwrap();
-                        println!("Sent quit event");
                     }
                     KeyCode::Char('l') => self.move_tab(1),
                     KeyCode::Char('h') => self.move_tab(-1),
