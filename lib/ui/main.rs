@@ -40,7 +40,7 @@ impl<'a> AppWidget<'a> {
             state: AppState::from_u8(app.state.load(Ordering::Relaxed))?,
             repos: app.repos.clone(),
             active_repo: app.active_repo,
-            selected_row: app.get_selcted_row(worktrees.len() as isize),
+            selected_row: app.get_selected_row(worktrees.len() as isize),
             worktrees,
             active_screen: &app.active_screen,
 

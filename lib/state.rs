@@ -198,37 +198,67 @@ impl App {
     }
 
     fn move_tab(&mut self, direction: i32) {
+        debug!("move tab by {}", direction);
         let n = (self.active_repo as i32) + direction;
-        if n < 0 {
-            self.active_repo = (n + (self.repos.len() as i32)) as usize;
-        }
+        debug!("calculated index: {}", n);
+
+        // Use rem_euclid for proper modulo with negative numbers
+        let repos_len = self.repos.len() as i32;
+        self.active_repo = n.rem_euclid(repos_len) as usize;
         self.selected_row = 0;
-        self.active_repo = (n as usize) % self.repos.len()
+
+        debug!("moved to repo index: {}", self.active_repo);
     }
 
     fn move_selected(&mut self, direction: isize) {
+        debug!("moving selected row by {}", direction);
         self.selected_row += direction;
+        debug!("new selected row: {}", self.selected_row);
     }
 
-    pub fn get_selcted_row(&self, worktree_count: isize) -> usize {
-        (((self.selected_row % worktree_count) + worktree_count) % worktree_count) as usize
+    pub fn get_selected_row(&self, worktree_count: isize) -> usize {
+        debug!("calculating wrapped row index for count: {worktree_count}");
+        let wrapped =
+            (((self.selected_row % worktree_count) + worktree_count) % worktree_count) as usize;
+        debug!(
+            "wrapped row index: {wrapped} (from raw: {})",
+            self.selected_row
+        );
+        wrapped
     }
 
     async fn delete_worktree(&mut self) -> Result<()> {
+        info!("deleting worktree");
+        debug!(
+            "acquiring read lock on repo_config[{}] to list worktrees",
+            self.active_repo
+        );
         let work_trees = self.repo_configs[self.active_repo]
             .read()
             .await
             .list_worktrees(false)
             .await?;
+        debug!(
+            "released read lock on repo_config[{}] after listing worktrees",
+            self.active_repo
+        );
         let to_delete = &work_trees
-            .get(self.get_selcted_row(work_trees.len() as isize))
+            .get(self.get_selected_row(work_trees.len() as isize))
             .ok_or(anyhow!("IOOB when selecting worktree"))?
             .reference;
+        debug!(
+            "acquiring write lock on repo_config[{}] to delete worktree '{}'",
+            self.active_repo, to_delete
+        );
         self.repo_configs[self.active_repo]
             .write()
             .await
             .delete_worktree(to_delete)
             .await?;
+        debug!(
+            "released write lock on repo_config[{}] after deleting worktree",
+            self.active_repo
+        );
         return Ok(());
     }
 
