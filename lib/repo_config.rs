@@ -4,6 +4,7 @@ use std::{
 };
 
 use git2::{build::CheckoutBuilder, Repository, WorktreeAddOptions};
+use log::{debug, error, info, trace};
 use path::PathBuf;
 use tokio::{process::Command, task::spawn_blocking};
 
@@ -40,27 +41,34 @@ impl RepoConfig {
     /// Calls `git worktree list` on the main path of the repository and retrns a vector of pairs of
     /// strings. The first item is the worktree path, and the second item is the branch name.
     pub async fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<WorktreeListing>> {
+        trace!("starting to load worktrees for repo '{}'", self.repo_name);
         // Get listt of worktrees
         let base_path = format!("{}/{}", self.base_path, self.base_tree);
         let inactive_trees = self.inactive_trees.clone();
         spawn_blocking(move || {
+            trace!("opening repository at '{}'", base_path);
             let repo = Repository::open(&base_path)?;
             let mut trees = Vec::new();
 
             // Add the base tree
+            trace!("creating listing from base tree");
             trees.push(create_listing_from_repo(&repo, base_path)?);
 
             // filter out worktrees in inactive list
+            trace!("iterating through worktrees");
             for tree_name in repo.worktrees()?.iter() {
                 let worktree = repo.find_worktree(tree_name.unwrap())?;
                 let path = worktree.path().to_str().unwrap().to_owned();
+                debug!("found worktree at path: {}", path);
                 if !include_inactive && inactive_trees.contains(&path) {
+                    debug!("skipping inactive worktree at {}", path);
                     continue;
                 }
                 let worktree_repo =
                     Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
                 trees.push(create_listing_from_repo(&worktree_repo, path)?);
             }
+            trace!("successfully loaded {} worktrees", trees.len());
             Ok(trees)
         })
         .await?
@@ -71,11 +79,13 @@ impl RepoConfig {
     /// Finds the worktree by branch name and adds its path to the inactive list.
     /// Updates the configuration file to persist the changes.
     pub async fn delete_worktree(&mut self, branch_name: &str) -> Result<()> {
+        trace!("marking worktree '{}' as inactive", branch_name);
         let worktrees = self.list_worktrees(false).await?;
         let result = worktrees
             .iter()
             .find(|listing| listing.reference == branch_name);
         if result.is_none() {
+            debug!("worktree '{}' not found", branch_name);
             return Err(Errors::WorktreeDoesNotExist {
                 worktree: branch_name.to_owned(),
             }
@@ -83,19 +93,24 @@ impl RepoConfig {
         };
         let worktree_path = &result.as_ref().unwrap().path;
         if self.inactive_trees.contains(&worktree_path) {
+            debug!("worktree '{}' is already inactive", branch_name);
             return Err(Errors::WorktreeInactive {
                 worktree: branch_name.to_owned(),
             }
             .into());
         }
         self.inactive_trees.push(worktree_path.clone());
+        trace!("added '{}' to inactive trees list", worktree_path);
 
+        trace!("reading config file from '{}'", Config::CONFIG_FILE());
         let mut config: Config = serde_json::from_str(&fs::read_to_string(Config::CONFIG_FILE())?)?;
         config.repo.insert(self.repo_name.clone(), self.clone());
+        trace!("writing updated config to '{}'", Config::CONFIG_FILE());
         fs::write(
             Config::CONFIG_FILE(),
             serde_json::to_string_pretty(&config)?,
         )?;
+        info!("successfully marked worktree '{}' as inactive", branch_name);
 
         Ok(())
     }
@@ -110,18 +125,30 @@ impl RepoConfig {
         _silent: bool,
         _dry_run: bool,
     ) -> Result<(String, String)> {
+        trace!("starting to create worktree for branch '{}'", branch_name);
         self.update_main_worktree(false).await?;
 
+        trace!(
+            "opening repository at '{}/{}'",
+            self.base_path,
+            self.base_tree
+        );
         let repo = Repository::open(format!("{}/{}", self.base_path, self.base_tree))?;
         // Create branch if it doesn't exist
+        trace!(
+            "retrieving head commit and creating branch '{}'",
+            branch_name
+        );
         let head_commit = repo.head()?.peel_to_commit()?;
         let branch = repo.branch(branch_name, &head_commit, true)?;
 
         // Create worktree
         let worktree_path;
         if !self.inactive_trees.is_empty() {
+            trace!("create_worktree: reusing inactive worktree path");
             worktree_path = self.inactive_trees.first().unwrap().clone();
         } else {
+            trace!("create_worktree: calculating new worktree path from directory count");
             let worktree_name = format!(
                 "tree{}",
                 fs::read_dir(&self.base_path)?
@@ -130,18 +157,23 @@ impl RepoConfig {
             );
             worktree_path = format!("{}/{}", self.base_path, worktree_name);
         }
+        debug!("worktree path determined: {}", worktree_path);
 
         // Switch the branch in the existing worktree
+        trace!("create_worktree: checking if worktree path exists and is non-empty");
         if let Ok(worktree) = fs::read_dir(&worktree_path) {
             if worktree.count() > 0 {
+                debug!("reusing existing worktree directory at {}", worktree_path);
                 // Switch the branch in the existing worktree
                 let _repo = Repository::open(&worktree_path)?;
                 _repo
                     .set_head(branch.get().name().unwrap())
                     .context("setting head in existing dir")?;
                 _repo.checkout_head(Some(CheckoutBuilder::new().force()))?;
+                debug!("successfully switched branch to '{}'", branch_name);
             }
         } else {
+            debug!("creating new worktree at {}", worktree_path);
             repo.worktree(
                 branch_name,
                 Path::new(&worktree_path),
@@ -151,10 +183,14 @@ impl RepoConfig {
                         .reference(Some(&branch.into_reference())),
                 ),
             )?;
+            debug!("worktree created successfully");
         }
 
         // NOTE: There is a better way to do this. Could use pop or something :/
         if self.inactive_trees.contains(&worktree_path) {
+            trace!(
+                "create_worktree: removing worktree path from inactive list and updating config"
+            );
             self.inactive_trees.remove(0);
             let mut config: Config =
                 serde_json::from_str(&fs::read_to_string(Config::CONFIG_FILE())?)?;
@@ -163,9 +199,14 @@ impl RepoConfig {
                 Config::CONFIG_FILE(),
                 serde_json::to_string_pretty(&config)?,
             )?;
+            debug!("config file updated");
         }
 
         // Copy common files from the base tree
+        trace!(
+            "create_worktree: copying {} configured files to worktree",
+            self.copy_files.len()
+        );
         for file in &self.copy_files {
             let mut from_path = PathBuf::new();
             from_path.push(self.base_path.clone());
@@ -181,8 +222,13 @@ impl RepoConfig {
             let to = to_path
                 .to_str()
                 .ok_or(anyhow!("Failed to create from path"))?;
+            debug!("copying file from {} to {}", from, to);
             copy(from, to)?;
         }
+        info!(
+            "successfully created worktree for branch '{}' at {}",
+            branch_name, worktree_path
+        );
         Ok((branch_name.to_owned(), worktree_path))
     }
 
@@ -190,11 +236,22 @@ impl RepoConfig {
     ///
     /// Runs `git pull` on the base tree directory.
     pub async fn update_main_worktree(&self, _dry_run: bool) -> Result<()> {
-        Command::new("git")
+        trace!(
+            "update_main_worktree: starting git pull on base tree at '{}/{}'",
+            self.base_path,
+            self.base_tree
+        );
+        let output = Command::new("git")
             .arg("pull")
             .current_dir(format!("{}/{}", self.base_path, self.base_tree))
             .output()
             .await?;
+
+        if !output.status.success() {
+            debug!("git pull command failed with status: {}", output.status);
+        } else {
+            debug!("git pull completed successfully");
+        }
         Ok(())
     }
 
@@ -204,6 +261,10 @@ impl RepoConfig {
     /// Updates the configuration file to persist the changes.
     /// XXX: This most likely does not behave as intended. Does not save the data to disk.
     pub fn add_file(&mut self, file_path: &str) -> Result<()> {
+        trace!(
+            "add_file: starting to add file '{}' to copy list",
+            file_path
+        );
         // check that file exists
         let mut full_path = PathBuf::new();
         full_path.push(self.base_tree.clone());
@@ -214,11 +275,14 @@ impl RepoConfig {
             .to_str()
             .ok_or(anyhow!("Failed to create the file path"))?;
 
+        trace!("add_file: checking if file exists at '{}'", path_string);
         if !full_path.exists() {
-            println!("File does not exist at {}", path_string);
+            debug!("file does not exist at '{}'", path_string);
+            error!("File does not exist at {}", path_string);
             return Err(anyhow!("File does not exist"));
         }
         self.copy_files.push(path_string.into());
+        info!("successfully added file '{}' to copy list", path_string);
         Ok(())
     }
 }
@@ -239,9 +303,12 @@ impl RepoConfig {
 /// A Result containing a WorktreeListing with the repository's path, current branch reference,
 /// and local state (Clean, Changes, or Staged). The PR state is initialized as Loading.
 fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeListing> {
+    trace!("starting to create listing for path '{}'", path);
     let mut listing: WorktreeListing = WorktreeListing::default();
     listing.path = path;
+    trace!("retrieving current branch reference");
     listing.reference = repo.head()?.shorthand().unwrap().to_owned();
+    trace!("checking for uncommitted and staged changes");
     let local_state = {
         use git2::Status;
         let is_changed = repo.statuses(None)?.iter().any(|entry| {
@@ -263,10 +330,13 @@ fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeL
             )
         });
         if is_changed {
+            debug!("found uncommitted changes");
             LocalState::Changes
         } else if is_staged {
+            debug!("found staged changes");
             LocalState::Staged
         } else {
+            debug!("worktree is clean");
             LocalState::Clean
         }
     };
@@ -274,6 +344,7 @@ fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeL
         pr_state: PrState::Loading,
         local_state,
     };
+    trace!("successfully created listing for '{}'", listing.reference);
     return Ok(listing);
 }
 
