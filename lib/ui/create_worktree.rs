@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use anyhow::Result;
+use log::{info, trace};
 use ratatui::{
     crossterm::event::{Event, KeyCode},
     layout::{Constraint, Layout},
@@ -31,6 +32,7 @@ pub struct CreateWorktreeScreen {
 
 impl CreateWorktreeScreen {
     pub fn new(sender: Sender<AppEvent>) -> Self {
+        trace!("creating CreateWorktreeScreen");
         CreateWorktreeScreen {
             name: String::new(),
             loading: Arc::new(AtomicBool::new(false)),
@@ -83,26 +85,35 @@ impl Screen for CreateWorktreeScreen {
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Esc => {
+                    trace!("user pressed esc, returning to main screen");
                     return Ok(ScreenAction::Main);
                 }
-                KeyCode::Char(c) => self.name.push(c),
+                KeyCode::Char(c) => {
+                    trace!("user typed character: '{}'", c);
+                    self.name.push(c);
+                }
                 KeyCode::Backspace => {
+                    trace!("user pressed backspace");
                     self.name.pop();
                 }
                 KeyCode::Enter => {
                     let repo = app.get_active_repo().clone();
                     let branch_name = self.name.clone();
+                    trace!("user pressed enter, creating worktree for branch '{}'", branch_name);
                     self.loading.store(true, Ordering::Relaxed);
                     let loadin_state = self.loading.clone();
                     let sender = self.sender.clone();
                     spawn(async move {
+                        trace!("spawning worktree creation task");
                         let mut new_repo = repo.read().await.clone();
                         new_repo
                             .create_worktree(&branch_name, true, false)
                             .await
                             .unwrap();
+                        trace!("worktree created, sending UpdateRepo event");
                         sender.send(AppEvent::UpdateRepo(new_repo)).await.unwrap();
                         loadin_state.store(false, Ordering::Relaxed);
+                        trace!("switching back to main screen");
                         sender
                             .send(AppEvent::SwitchScreen(ScreenAction::Main))
                             .await
