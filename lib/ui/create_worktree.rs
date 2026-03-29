@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use anyhow::Result;
-use log::{info, trace};
+use log::trace;
 use ratatui::{
     crossterm::event::{Event, KeyCode},
     layout::{Constraint, Layout},
@@ -99,7 +99,10 @@ impl Screen for CreateWorktreeScreen {
                 KeyCode::Enter => {
                     let repo = app.get_active_repo().clone();
                     let branch_name = self.name.clone();
-                    trace!("user pressed enter, creating worktree for branch '{}'", branch_name);
+                    trace!(
+                        "user pressed enter, creating worktree for branch '{}'",
+                        branch_name
+                    );
                     self.loading.store(true, Ordering::Relaxed);
                     let loadin_state = self.loading.clone();
                     let sender = self.sender.clone();
