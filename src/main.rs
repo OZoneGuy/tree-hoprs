@@ -8,6 +8,7 @@ use lib::state::App;
 use lib::tree_hoprs::*;
 use log::{debug, error, info, trace, warn, LevelFilter};
 use rolling_file::{BasicRollingFileAppender, RollingConditionBasic};
+use shellexpand::tilde;
 use simplelog::{ColorChoice, ConfigBuilder, TermLogger, TerminalMode, WriteLogger};
 
 #[derive(Parser, Debug)]
@@ -87,8 +88,16 @@ async fn main() -> Result<()> {
     };
 
     if args.command.is_none() {
+        let log_path = tilde("~/.local/share/tree-hoprs.log");
+        let log_path = std::path::Path::new(log_path.as_ref());
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if !log_path.exists() {
+            std::fs::write(log_path, "")?;
+        }
         let rotate_file = BasicRollingFileAppender::new(
-            "/var/log/tree-hoprs.log",
+            log_path,
             RollingConditionBasic::new().max_size(1_000_000),
             1,
         )?;
