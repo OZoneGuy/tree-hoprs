@@ -145,10 +145,10 @@ impl RepoConfig {
         // Create worktree
         let worktree_path;
         if !self.inactive_trees.is_empty() {
-            trace!("create_worktree: reusing inactive worktree path");
+            trace!("reusing inactive worktree path");
             worktree_path = self.inactive_trees.first().unwrap().clone();
         } else {
-            trace!("create_worktree: calculating new worktree path from directory count");
+            trace!("calculating new worktree path from directory count");
             let worktree_name = format!(
                 "tree{}",
                 fs::read_dir(&self.base_path)?
@@ -160,7 +160,7 @@ impl RepoConfig {
         debug!("worktree path determined: {}", worktree_path);
 
         // Switch the branch in the existing worktree
-        trace!("create_worktree: checking if worktree path exists and is non-empty");
+        trace!("checking if worktree path exists and is non-empty");
         if let Ok(worktree) = fs::read_dir(&worktree_path) {
             if worktree.count() > 0 {
                 debug!("reusing existing worktree directory at {}", worktree_path);
@@ -170,10 +170,12 @@ impl RepoConfig {
                     .set_head(branch.get().name().unwrap())
                     .context("setting head in existing dir")?;
                 _repo.checkout_head(Some(CheckoutBuilder::new().force()))?;
-                debug!("successfully switched branch to '{}'", branch_name);
+                trace!("successfully switched branch to '{}'", branch_name);
+            } else {
+                error!("worktree path exists, but it is empty");
             }
         } else {
-            debug!("creating new worktree at {}", worktree_path);
+            debug!("worktree directory does not exist, will create new worktree");
             repo.worktree(
                 branch_name,
                 Path::new(&worktree_path),
@@ -188,9 +190,7 @@ impl RepoConfig {
 
         // NOTE: There is a better way to do this. Could use pop or something :/
         if self.inactive_trees.contains(&worktree_path) {
-            trace!(
-                "create_worktree: removing worktree path from inactive list and updating config"
-            );
+            trace!("removing worktree path from inactive list and updating config");
             self.inactive_trees.remove(0);
             let mut config: Config =
                 serde_json::from_str(&fs::read_to_string(Config::CONFIG_FILE())?)?;
@@ -204,10 +204,11 @@ impl RepoConfig {
 
         // Copy common files from the base tree
         trace!(
-            "create_worktree: copying {} configured files to worktree",
+            "copying {} configured files to worktree",
             self.copy_files.len()
         );
         for file in &self.copy_files {
+            trace!("processing copy for file: {}", file);
             let mut from_path = PathBuf::new();
             from_path.push(self.base_path.clone());
             from_path.push(self.base_tree.clone());
@@ -223,7 +224,9 @@ impl RepoConfig {
                 .to_str()
                 .ok_or(anyhow!("Failed to create from path"))?;
             debug!("copying file from {} to {}", from, to);
+            trace!("initiating file copy operation");
             copy(from, to)?;
+            trace!("file copy completed successfully");
         }
         info!(
             "successfully created worktree for branch '{}' at {}",
@@ -237,7 +240,7 @@ impl RepoConfig {
     /// Runs `git pull` on the base tree directory.
     pub async fn update_main_worktree(&self, _dry_run: bool) -> Result<()> {
         trace!(
-            "update_main_worktree: starting git pull on base tree at '{}/{}'",
+            "starting git pull on base tree at '{}/{}'",
             self.base_path,
             self.base_tree
         );
@@ -248,7 +251,14 @@ impl RepoConfig {
             .await?;
 
         if !output.status.success() {
-            debug!("git pull command failed with status: {}", output.status);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            debug!("git pull stdout: {}", stdout);
+            debug!("git pull stderr: {}", stderr);
+            error!(
+                "git pull failed for branch '{}' in '{}'",
+                self.base_tree, self.base_path
+            );
         } else {
             debug!("git pull completed successfully");
         }
@@ -259,28 +269,25 @@ impl RepoConfig {
     ///
     /// Verifies that the file exists at the specified path and adds it to the copy_files list.
     /// Updates the configuration file to persist the changes.
-    /// XXX: This most likely does not behave as intended. Does not save the data to disk.
     pub fn add_file(&mut self, file_path: &str) -> Result<()> {
-        trace!(
-            "add_file: starting to add file '{}' to copy list",
-            file_path
-        );
-        // check that file exists
+        trace!("starting to add file '{}' to copy list", file_path);
+        // Build full path: base_path/base_tree/file_path
+        trace!("constructing full path for file validation");
         let mut full_path = PathBuf::new();
-        full_path.push(self.base_tree.clone());
-        full_path.push(self.base_path.clone());
+        full_path.push(&self.base_path);
+        full_path.push(&self.base_tree);
         full_path.push(file_path);
 
         let path_string = full_path
             .to_str()
             .ok_or(anyhow!("Failed to create the file path"))?;
 
-        trace!("add_file: checking if file exists at '{}'", path_string);
+        trace!("checking if file exists at '{}'", path_string);
         if !full_path.exists() {
-            debug!("file does not exist at '{}'", path_string);
             error!("File does not exist at {}", path_string);
             return Err(anyhow!("File does not exist"));
         }
+        trace!("file validation passed, adding to copy list");
         self.copy_files.push(path_string.into());
         info!("successfully added file '{}' to copy list", path_string);
         Ok(())
