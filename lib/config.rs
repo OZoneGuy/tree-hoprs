@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    env::var,
     fs::{self},
 };
 
@@ -8,6 +7,7 @@ use anyhow::{anyhow, Result};
 use dialoguer::Input;
 use log::{debug, info, trace};
 use serde::{Deserialize, Serialize};
+use shellexpand::tilde;
 
 use crate::repo_config::RepoConfig;
 
@@ -27,7 +27,7 @@ impl Config {
     /// Defaults to `~/.config/tree-hoprs.json`
     #[allow(non_snake_case)]
     pub fn CONFIG_FILE() -> String {
-        format!("{}/.config/tree-hoprs.json", var("HOME").unwrap())
+        tilde("~/.config/tree-hoprs.json").to_string()
     }
 
     /// Loads the configuration from the config file.
