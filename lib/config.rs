@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use dialoguer::Input;
+use log::{debug, info, trace};
 use serde::{Deserialize, Serialize};
 
 use crate::repo_config::RepoConfig;
@@ -33,8 +34,10 @@ impl Config {
     ///
     /// Returns an error if the file doesn't exist or is invalid JSON.
     pub fn get_config_file() -> Result<Self> {
+        trace!("Loading configuration from file");
         let config_file = fs::File::open(Self::CONFIG_FILE())?;
         let config: Self = serde_json::from_reader(config_file)?;
+        info!("Configuration loaded successfully");
         return Ok(config);
     }
 
@@ -48,7 +51,9 @@ impl Config {
     ///
     /// Returns the newly created Config and writes it to the config file.
     pub fn create_config_file(repo: &Option<String>) -> Result<Self> {
+        trace!("gathering base tree name from user");
         let base_tree = Input::new().with_prompt("Base tree name").interact_text()?;
+        trace!("gathering base path from user");
         let base_path = Input::new()
             .with_prompt("Base repos path")
             .interact_text()?;
@@ -58,6 +63,7 @@ impl Config {
         } else {
             repo_name = repo.clone().unwrap();
         }
+        trace!("creating Config struct with repo name: {}", repo_name);
         let mut config = Config {
             repo: HashMap::new(),
             active_repo: repo_name.clone(),
@@ -70,8 +76,10 @@ impl Config {
             copy_files: Vec::new(),
         };
         config.repo.insert(repo_name.clone(), values.clone());
+        trace!("writing config to file");
         let config_file = fs::File::create(Self::CONFIG_FILE())?;
         serde_json::to_writer_pretty(config_file, &config)?;
+        info!("successfully created config file for repo '{}'", repo_name);
         Ok(config)
     }
 
@@ -82,6 +90,7 @@ impl Config {
     /// # Arguments
     /// * `repo` - Optional repository name. If `None`, uses the active repository.
     pub fn get_values_from_config_file(&self, repo: &Option<String>) -> Result<RepoConfig> {
+        trace!("retrieving config for repo: {:?}", repo);
         if repo.is_none() {
             Ok(self.repo.get(&self.active_repo).unwrap().clone())
         } else {
@@ -104,7 +113,9 @@ impl Config {
     /// # Arguments
     /// * `repo_name` - The name of the repository to set as active.
     pub fn set_active_repo(&mut self, repo_name: String) -> std::result::Result<(), anyhow::Error> {
+        trace!("setting active repo to: {}", repo_name);
         self.active_repo = repo_name;
+        trace!("persisting config to file");
         fs::write(Self::CONFIG_FILE(), serde_json::to_string_pretty(self)?)?;
         Ok(())
     }
@@ -124,8 +135,10 @@ impl Config {
         base_path: String,
     ) -> Result<()> {
         if self.repo.contains_key(&repo_name) {
+            debug!("repo already exists: {}", repo_name);
             return Err(anyhow!("Repository already exists"));
         }
+        trace!("adding repo: {}", repo_name);
         self.repo.insert(
             repo_name.clone(),
             RepoConfig {
@@ -136,6 +149,7 @@ impl Config {
                 copy_files: Vec::new(),
             },
         );
+        trace!("persisting config to file");
         fs::write(Self::CONFIG_FILE(), serde_json::to_string_pretty(&self)?)?;
         Ok(())
     }
@@ -148,12 +162,15 @@ impl Config {
     /// * `repo_name` - The name of the repository to delete.
     pub fn delete_repo(&mut self, repo_name: String) -> Result<()> {
         if !self.repo.contains_key(&repo_name) {
+            debug!("repo not found: {}", repo_name);
             return Err(anyhow!(
                 "Repository not found. Available repositories are {:?}",
                 self.repo.keys()
             ));
         }
+        trace!("deleting repo: {}", repo_name);
         self.repo.remove(&repo_name);
+        trace!("persisting config to file");
         fs::write(Self::CONFIG_FILE(), serde_json::to_string_pretty(&self)?)?;
         Ok(())
     }

@@ -1,3 +1,4 @@
+use log::*;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,10 +74,12 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self> {
+        trace!("Getting the config file for the tui");
         match Config::get_config_file() {
             Ok(conf) => {
                 let (tx, recv) = channel(4);
                 let repos = conf.get_repos();
+                trace!("creating app object");
                 let app = Self {
                     active_screen: None,
 
@@ -126,6 +129,7 @@ impl App {
                 match e {
                     AppEvent::Input(input_event) => self.handle_input(input_event).await?,
                     AppEvent::Quit => {
+                        info!("ending tui loop");
                         return Ok(());
                     }
                     AppEvent::SwitchScreen(action) => match action {
@@ -136,7 +140,15 @@ impl App {
                         ScreenAction::Stay => (),
                     },
                     AppEvent::UpdateRepo(new_config) => {
-                        self.repo_configs[self.active_repo] = Arc::new(RwLock::new(new_config))
+                        trace!(
+                            "acquiring write lock on repo_config[{}] for update repo event",
+                            self.active_repo
+                        );
+                        self.repo_configs[self.active_repo] = Arc::new(RwLock::new(new_config));
+                        trace!(
+                            "released write lock on repo_config[{}] after update",
+                            self.active_repo
+                        );
                     }
                     AppEvent::Tick => (),
                 };
@@ -157,6 +169,8 @@ impl App {
             if let Event::Key(key) = user_event {
                 match key.code {
                     KeyCode::Char('q') => {
+                        trace!("quitting while loading");
+                        info!("quitting");
                         self.state
                             .as_ref()
                             .store(AppState::Quitting as u8, Ordering::Relaxed);
@@ -181,6 +195,7 @@ impl App {
             if let Event::Key(key) = user_event {
                 match key.code {
                     KeyCode::Char('q') => {
+                        info!("triggering quit");
                         self.transmitter.send(AppEvent::Quit).await.unwrap();
                     }
                     KeyCode::Char('l') => self.move_tab(1),
@@ -198,29 +213,29 @@ impl App {
     }
 
     fn move_tab(&mut self, direction: i32) {
-        debug!("move tab by {}", direction);
+        trace!("move tab by {}", direction);
         let n = (self.active_repo as i32) + direction;
-        debug!("calculated index: {}", n);
+        trace!("calculated index: {}", n);
 
         // Use rem_euclid for proper modulo with negative numbers
         let repos_len = self.repos.len() as i32;
         self.active_repo = n.rem_euclid(repos_len) as usize;
         self.selected_row = 0;
 
-        debug!("moved to repo index: {}", self.active_repo);
+        trace!("moved to repo index: {}", self.active_repo);
     }
 
     fn move_selected(&mut self, direction: isize) {
-        debug!("moving selected row by {}", direction);
+        trace!("moving selected row by {}", direction);
         self.selected_row += direction;
-        debug!("new selected row: {}", self.selected_row);
+        trace!("new selected row: {}", self.selected_row);
     }
 
     pub fn get_selected_row(&self, worktree_count: isize) -> usize {
-        debug!("calculating wrapped row index for count: {worktree_count}");
+        trace!("calculating wrapped row index for count: {worktree_count}");
         let wrapped =
             (((self.selected_row % worktree_count) + worktree_count) % worktree_count) as usize;
-        debug!(
+        trace!(
             "wrapped row index: {wrapped} (from raw: {})",
             self.selected_row
         );
@@ -229,7 +244,7 @@ impl App {
 
     async fn delete_worktree(&mut self) -> Result<()> {
         info!("deleting worktree");
-        debug!(
+        trace!(
             "acquiring read lock on repo_config[{}] to list worktrees",
             self.active_repo
         );
@@ -238,7 +253,7 @@ impl App {
             .await
             .list_worktrees(false)
             .await?;
-        debug!(
+        trace!(
             "released read lock on repo_config[{}] after listing worktrees",
             self.active_repo
         );
@@ -246,7 +261,7 @@ impl App {
             .get(self.get_selected_row(work_trees.len() as isize))
             .ok_or(anyhow!("IOOB when selecting worktree"))?
             .reference;
-        debug!(
+        trace!(
             "acquiring write lock on repo_config[{}] to delete worktree '{}'",
             self.active_repo, to_delete
         );
@@ -255,7 +270,7 @@ impl App {
             .await
             .delete_worktree(to_delete)
             .await?;
-        debug!(
+        trace!(
             "released write lock on repo_config[{}] after deleting worktree",
             self.active_repo
         );
@@ -263,6 +278,7 @@ impl App {
     }
 
     fn create_worktree(&mut self) -> Result<()> {
+        trace!("creating worktree screen");
         self.active_screen = Some(Box::new(CreateWorktreeScreen::new(
             self.transmitter.clone(),
         )));
@@ -270,13 +286,26 @@ impl App {
     }
 
     fn update_mainworktree(&self) -> Result<()> {
+        info!("updating main worktree");
         let repo = self.repo_configs[self.active_repo].clone();
         let state = self.state.clone();
-        let sender = self.transmitter.clone();
+        trace!("creating sender for update async call");
+        // let sender = self.transmitter.clone();
+        let active_repo_idx = self.active_repo;
+        trace!("setting loading state to true");
         state.store(AppState::Loading as u8, Ordering::Relaxed);
         spawn(async move {
+            trace!(
+                "acquiring read lock on repo_config[{}] to update main worktree",
+                active_repo_idx
+            );
             repo.read().await.update_main_worktree(false).await.unwrap();
-            sender.send(AppEvent::Tick).await.unwrap();
+            trace!(
+                "released read lock on repo_config[{}] after updating main worktree",
+                active_repo_idx
+            );
+            // sender.send(AppEvent::Tick).await.unwrap();
+            trace!("setting main loading state to false");
             state.store(AppState::Normal as u8, Ordering::Relaxed);
         });
         Ok(())
