@@ -19,6 +19,9 @@ pub struct Config {
     /// The name of the currently active repository.
     #[serde(rename = "active_repository")]
     active_repo: String,
+
+    /// The github auth token
+    auth_token: Option<String>,
 }
 
 impl Config {
@@ -67,6 +70,7 @@ impl Config {
         let mut config = Config {
             repo: HashMap::new(),
             active_repo: repo_name.clone(),
+            auth_token: None,
         };
         let values = RepoConfig {
             repo_name: repo_name.clone(),
@@ -171,6 +175,12 @@ impl Config {
         trace!("deleting repo: {}", repo_name);
         self.repo.remove(&repo_name);
         trace!("persisting config to file");
+        fs::write(Self::CONFIG_FILE(), serde_json::to_string_pretty(&self)?)?;
+        Ok(())
+    }
+
+    pub fn add_auth_token(&mut self, token: String) -> Result<()> {
+        self.auth_token = Some(token);
         fs::write(Self::CONFIG_FILE(), serde_json::to_string_pretty(&self)?)?;
         Ok(())
     }

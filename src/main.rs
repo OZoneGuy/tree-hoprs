@@ -2,10 +2,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use comfy_table::Table;
-use lib::config::Config;
 use lib::repo_config::RepoConfig;
 use lib::state::App;
 use lib::tree_hoprs::*;
+use lib::{config::Config, gh::GitHub};
 use log::{debug, error, info, trace, warn, LevelFilter};
 use rolling_file::{BasicRollingFileAppender, RollingConditionBasic};
 use shellexpand::tilde;
@@ -28,9 +28,6 @@ struct Args {
     #[command(subcommand)]
     command: Option<TreeCommand>,
 }
-
-#[derive(Subcommand, Debug)]
-enum ConfigCommand {}
 
 #[derive(Subcommand, Debug)]
 enum TreeCommand {
@@ -69,6 +66,8 @@ enum TreeCommand {
     AddFile {
         file_path: String,
     },
+
+    Authenticate,
 }
 
 #[tokio::main(worker_threads = 2)]
@@ -209,5 +208,10 @@ async fn main() -> Result<()> {
             Ok(())
         }
         TreeCommand::AddFile { file_path } => repo_config.add_file(&file_path),
+        TreeCommand::Authenticate => {
+            let token = GitHub::setup_auth()?;
+            config.add_auth_token(token)?;
+            Ok(())
+        }
     }
 }
