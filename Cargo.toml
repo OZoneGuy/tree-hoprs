@@ -18,6 +18,7 @@ dialoguer = { version = "0.11.0", features = ["fuzzy-select", "completion"] }
 futures = "0.3.32"
 git2 = "0.20.4"
 log = "0.4.29"
+octocrab = "0.49.6"
 ratatui = "0.30.0"
 rolling-file = "0.2.0"
 serde = { version = "1.0.208", features = ["derive"] }
@@ -26,3 +27,4 @@ shellexpand = "3.1.0"
 simplelog = "0.12.2"
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["macros", "rt", "rt-multi-thread", "sync", "time", "process"] }
+ureq = "3.3.0"
