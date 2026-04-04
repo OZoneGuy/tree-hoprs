@@ -52,7 +52,7 @@ impl RepoConfig {
 
             // Add the base tree
             trace!("creating listing from base tree");
-            trees.push(create_listing_from_repo(&repo, base_path)?);
+            trees.push(create_listing_from_repo(&repo)?);
 
             // filter out worktrees in inactive list
             trace!("iterating through worktrees");
@@ -60,13 +60,16 @@ impl RepoConfig {
                 let worktree = repo.find_worktree(tree_name.unwrap())?;
                 let path = worktree.path().to_str().unwrap().to_owned();
                 debug!("found worktree at path: {}", path);
-                if !include_inactive && inactive_trees.contains(&path) {
+                if !include_inactive
+                    && (inactive_trees.contains(&path)
+                        || inactive_trees.contains(&format!("{path}/")))
+                {
                     debug!("skipping inactive worktree at {}", path);
                     continue;
                 }
                 let worktree_repo =
                     Repository::open_from_worktree(&repo.find_worktree(tree_name.unwrap())?)?;
-                trees.push(create_listing_from_repo(&worktree_repo, path)?);
+                trees.push(create_listing_from_repo(&worktree_repo)?);
             }
             trace!("successfully loaded {} worktrees", trees.len());
             Ok(trees)
@@ -309,10 +312,10 @@ impl RepoConfig {
 ///
 /// A Result containing a WorktreeListing with the repository's path, current branch reference,
 /// and local state (Clean, Changes, or Staged). The PR state is initialized as Loading.
-fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeListing> {
-    trace!("starting to create listing for path '{}'", path);
+fn create_listing_from_repo(repo: &Repository) -> Result<WorktreeListing> {
+    trace!("starting to create listing for path '{:?}'", repo.workdir());
     let mut listing: WorktreeListing = WorktreeListing::default();
-    listing.path = path;
+    listing.path = repo.workdir().unwrap().to_str().unwrap().to_owned();
     trace!("retrieving current branch reference");
     listing.reference = repo.head()?.shorthand().unwrap().to_owned();
     trace!("checking for uncommitted and staged changes");
