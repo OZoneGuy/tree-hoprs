@@ -177,10 +177,10 @@ impl RepoConfig {
         } else {
             debug!("worktree directory does not exist, will create new worktree");
             repo.worktree(
-                branch_name,
+                &worktree_path.split("/").last().unwrap(),
                 Path::new(&worktree_path),
                 Some(
-                    WorktreeAddOptions::new()
+                    &WorktreeAddOptions::new()
                         .checkout_existing(true)
                         .reference(Some(&branch.into_reference())),
                 ),
