@@ -260,8 +260,7 @@ impl App {
         let work_trees = self.repo_configs[self.active_repo]
             .read()
             .await
-            .list_worktrees(false)
-            .await?;
+            .list_worktrees(false)?;
         trace!(
             "released read lock on repo_config[{}] after listing worktrees",
             self.active_repo
@@ -272,7 +271,8 @@ impl App {
             .reference;
         trace!(
             "acquiring write lock on repo_config[{}] to delete worktree '{}'",
-            self.active_repo, to_delete
+            self.active_repo,
+            to_delete
         );
         self.repo_configs[self.active_repo]
             .write()
