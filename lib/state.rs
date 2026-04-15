@@ -129,7 +129,17 @@ impl App {
             select! {
                 Some(e) = self.input_channel.recv() => {
                 match e {
-                    AppEvent::Input(input_event) => self.handle_input(input_event).await?,
+                    AppEvent::Input(input_event) => {
+                        let mut new_event = input_event;
+                        loop{
+                            self.handle_input(new_event).await?;
+                            if event::poll(Duration::from_millis(0)).unwrap() {
+                                new_event = event::read()?;
+                            } else {
+                                break;
+                            }
+                        };
+                    },
                     AppEvent::Quit => {
                         info!("ending tui loop");
                         end_signal.store(true, Ordering::Relaxed);
