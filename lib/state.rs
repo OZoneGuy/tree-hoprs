@@ -1,13 +1,12 @@
 use log::*;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::RwLock;
 
 use anyhow::{anyhow, Result};
-use crossterm::event::{Event, EventStream, KeyCode};
-use futures::StreamExt;
+use crossterm::event::{self, Event, KeyCode};
 use ratatui::DefaultTerminal;
 use tokio::time::sleep;
 use tokio::{select, spawn};
@@ -107,30 +106,43 @@ impl App {
     }
 
     pub async fn render(&mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        let ticker_tx = self.transmitter.clone();
+        let input_tx = self.transmitter.clone();
+        let end_signal = Arc::new(AtomicBool::new(false));
 
+        let input_end_signal = end_signal.clone();
         // Background task to trigger render ticks and user input events
         spawn(async move {
-            let mut reader = EventStream::new();
             loop {
-                select! {
-                    user_event = reader.next() => {
-                        if let Some(Ok(e)) = user_event {
-                            ticker_tx.send(AppEvent::Input(e)).await.unwrap();
-                        }
-                    },
-                    _ = sleep(Duration::from_millis(TICK_RATE)) => ticker_tx.send(AppEvent::Tick).await.unwrap(),
+                if input_end_signal.load(Ordering::Relaxed) {
+                    break;
                 };
+                if event::poll(Duration::from_millis(50)).unwrap() {
+                    let user_event = event::read();
+                    if let Ok(e) = user_event {
+                        input_tx.send(AppEvent::Input(e)).await.unwrap();
+                    }
+                }
             }
         });
 
         loop {
-            if let Some(e) = self.input_channel.recv().await {
+            select! {
+                Some(e) = self.input_channel.recv() => {
                 match e {
-                    AppEvent::Input(input_event) => self.handle_input(input_event).await?,
+                    AppEvent::Input(input_event) => {
+                        let mut new_event = input_event;
+                        loop{
+                            self.handle_input(new_event).await?;
+                            if event::poll(Duration::from_millis(0)).unwrap() {
+                                new_event = event::read()?;
+                            } else {
+                                break;
+                            }
+                        };
+                    },
                     AppEvent::Quit => {
                         info!("ending tui loop");
-                        return Ok(());
+                        end_signal.store(true, Ordering::Relaxed);
                     }
                     AppEvent::SwitchScreen(action) => match action {
                         ScreenAction::Main => self.active_screen = None,
@@ -152,9 +164,16 @@ impl App {
                     }
                     AppEvent::Tick => (),
                 };
-                let widget = AppWidget::from_app(self).await?;
-                terminal.draw(|frame| frame.render_widget(&widget, frame.area()))?;
+                },
+                _ = sleep(Duration::from_millis(TICK_RATE)) => (),
             };
+            let widget = AppWidget::from_app(self).await?;
+            terminal.draw(|frame| frame.render_widget(&widget, frame.area()))?;
+            if end_signal.load(Ordering::Relaxed) {
+                info!("quitting now?");
+                // event_loop.abort();
+                return Ok(());
+            }
         }
     }
 
@@ -251,8 +270,7 @@ impl App {
         let work_trees = self.repo_configs[self.active_repo]
             .read()
             .await
-            .list_worktrees(false)
-            .await?;
+            .list_worktrees(false)?;
         trace!(
             "released read lock on repo_config[{}] after listing worktrees",
             self.active_repo
@@ -263,7 +281,8 @@ impl App {
             .reference;
         trace!(
             "acquiring write lock on repo_config[{}] to delete worktree '{}'",
-            self.active_repo, to_delete
+            self.active_repo,
+            to_delete
         );
         self.repo_configs[self.active_repo]
             .write()

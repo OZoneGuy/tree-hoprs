@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
 
     match args.command.unwrap() {
         TreeCommand::List { raw } => {
-            let worktrees = repo_config.list_worktrees(false).await?;
+            let worktrees = repo_config.list_worktrees(false)?;
             if raw {
                 debug!("listing wortrees in raw mode");
                 for tree in worktrees {

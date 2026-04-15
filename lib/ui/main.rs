@@ -30,12 +30,7 @@ pub struct AppWidget<'a> {
 
 impl<'a> AppWidget<'a> {
     pub async fn from_app(app: &'a App) -> Result<Self> {
-        let worktrees = app
-            .get_active_repo()
-            .read()
-            .await
-            .list_worktrees(false)
-            .await?;
+        let worktrees = app.get_active_repo().read().await.list_worktrees(false)?;
         Ok(Self {
             state: AppState::from_u8(app.state.load(Ordering::Relaxed))?,
             repos: app.repos.clone(),
