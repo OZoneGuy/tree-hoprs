@@ -36,7 +36,11 @@ impl AppState {
 }
 
 /// The application tick rate in ms.
-const TICK_RATE: u64 = 50;
+const TICK_RATE: u64 = 25;
+/// The default input rate in ms
+const INPUT_POLL_RATE: u64 = 15;
+/// The rapid input rate, when we have detected an input, in ms
+const RAPID_INPUT_POLL_RATE: u64 = 3;
 
 /// An enum to send events to the main controll, `App`, to trigger application events. All events
 /// should trigger a redraw of the screen. Sent to the main controller via an mpsc Transmitter.
@@ -112,15 +116,19 @@ impl App {
         let input_end_signal = end_signal.clone();
         // Background task to trigger render ticks and user input events
         spawn(async move {
+            let mut poll_rate = INPUT_POLL_RATE;
             loop {
                 if input_end_signal.load(Ordering::Relaxed) {
                     break;
                 };
-                if event::poll(Duration::from_millis(50)).unwrap() {
+                if event::poll(Duration::from_millis(poll_rate)).unwrap() {
+                    poll_rate = RAPID_INPUT_POLL_RATE;
                     let user_event = event::read();
                     if let Ok(e) = user_event {
                         input_tx.send(AppEvent::Input(e)).await.unwrap();
                     }
+                } else {
+                    poll_rate = INPUT_POLL_RATE;
                 }
             }
         });
@@ -130,15 +138,7 @@ impl App {
                 Some(e) = self.input_channel.recv() => {
                 match e {
                     AppEvent::Input(input_event) => {
-                        let mut new_event = input_event;
-                        loop{
-                            self.handle_input(new_event).await?;
-                            if event::poll(Duration::from_millis(0)).unwrap() {
-                                new_event = event::read()?;
-                            } else {
-                                break;
-                            }
-                        };
+                        self.handle_input(input_event).await?;
                     },
                     AppEvent::Quit => {
                         info!("ending tui loop");
