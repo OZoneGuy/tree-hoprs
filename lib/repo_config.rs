@@ -28,9 +28,27 @@ pub struct RepoConfig {
     pub inactive_trees: Vec<String>,
     /// List of files to be copied when creating new worktrees
     pub copy_files: Vec<String>,
+    /// Caching of wortree listing
+    #[serde(skip)]
+    worktree_listing: Option<Vec<WorktreeListing>>,
 }
 
 impl RepoConfig {
+    pub fn new(
+        repo_name: impl Into<String>,
+        base_tree: impl Into<String>,
+        base_path: impl Into<String>,
+    ) -> Self {
+        return Self {
+            repo_name: repo_name.into(),
+            base_tree: base_tree.into(),
+            base_path: base_path.into(),
+            inactive_trees: Vec::new(),
+            copy_files: Vec::new(),
+            worktree_listing: None,
+        };
+    }
+
     /// Returns a reference to the list of inactive worktree paths
     pub fn get_inactive_trees(&self) -> &Vec<String> {
         &self.inactive_trees
@@ -43,6 +61,9 @@ impl RepoConfig {
     pub fn list_worktrees(&self, include_inactive: bool) -> Result<Vec<WorktreeListing>> {
         trace!("starting to load worktrees for repo '{}'", self.repo_name);
         // Get listt of worktrees
+        if let Some(listing) = self.worktree_listing.as_ref() {
+            return Ok(listing.clone());
+        }
         let base_path = format!("{}/{}", self.base_path, self.base_tree);
         let inactive_trees = self.inactive_trees.clone();
         trace!("opening repository at '{}'", base_path);
@@ -109,7 +130,7 @@ impl RepoConfig {
         )?;
         info!("successfully marked worktree '{}' as inactive", branch_name);
 
-        Ok(())
+        return self.run_cache();
     }
 
     /// Creates a new worktree for the given branch name
@@ -229,6 +250,7 @@ impl RepoConfig {
             "successfully created worktree for branch '{}' at {}",
             branch_name, worktree_path
         );
+        self.run_cache()?;
         Ok((branch_name.to_owned(), worktree_path))
     }
 
@@ -288,6 +310,12 @@ impl RepoConfig {
         self.copy_files.push(path_string.into());
         info!("successfully added file '{}' to copy list", path_string);
         Ok(())
+    }
+
+    pub(crate) fn run_cache(&mut self) -> Result<()> {
+        let trees = self.list_worktrees(false)?;
+        self.worktree_listing = Some(trees);
+        return Ok(());
     }
 }
 
@@ -353,7 +381,7 @@ fn create_listing_from_repo(repo: &Repository, path: String) -> Result<WorktreeL
 }
 
 /// Represents the state of a pull request associated with a worktree
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug)]
 pub enum PrState {
     /// Pull request is currently being loaded
     #[default]
@@ -371,7 +399,7 @@ pub enum PrState {
 }
 
 /// Represents the local state of changes in a worktree
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub enum LocalState {
     /// No uncommitted changes
     #[default]
@@ -383,7 +411,7 @@ pub enum LocalState {
 }
 
 /// Combines pull request and local state information for a worktree
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct WorktreeState {
     /// The state of the associated pull request
     pub pr_state: PrState,
@@ -392,7 +420,7 @@ pub struct WorktreeState {
 }
 
 /// Information about a worktree including its path, branch, and state
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct WorktreeListing {
     /// The file system path where the worktree is located
     pub path: String,

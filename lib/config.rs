@@ -52,9 +52,9 @@ impl Config {
     /// Returns the newly created Config and writes it to the config file.
     pub fn create_config_file(repo: &Option<String>) -> Result<Self> {
         trace!("gathering base tree name from user");
-        let base_tree = Input::new().with_prompt("Base tree name").interact_text()?;
+        let base_tree: String = Input::new().with_prompt("Base tree name").interact_text()?;
         trace!("gathering base path from user");
-        let base_path = Input::new()
+        let base_path: String = Input::new()
             .with_prompt("Base repos path")
             .interact_text()?;
         let repo_name: String;
@@ -68,13 +68,7 @@ impl Config {
             repo: HashMap::new(),
             active_repo: repo_name.clone(),
         };
-        let values = RepoConfig {
-            repo_name: repo_name.clone(),
-            base_tree,
-            base_path,
-            inactive_trees: Vec::new(),
-            copy_files: Vec::new(),
-        };
+        let values = RepoConfig::new(&repo_name, base_tree, base_path);
         config.repo.insert(repo_name.clone(), values.clone());
         trace!("writing config to file");
         let config_file = fs::File::create(Self::CONFIG_FILE())?;
@@ -141,13 +135,7 @@ impl Config {
         trace!("adding repo: {}", repo_name);
         self.repo.insert(
             repo_name.clone(),
-            RepoConfig {
-                repo_name: repo_name.clone(),
-                base_tree,
-                base_path,
-                inactive_trees: Vec::new(),
-                copy_files: Vec::new(),
-            },
+            RepoConfig::new(repo_name, base_tree, base_path),
         );
         trace!("persisting config to file");
         fs::write(Self::CONFIG_FILE(), serde_json::to_string_pretty(&self)?)?;

@@ -95,7 +95,12 @@ impl App {
                     repo_configs: conf
                         .get_repo_configs()
                         .iter()
-                        .map(|c| Arc::new(RwLock::new(c.clone())))
+                        .map(|c| {
+                            let mut conf = c.clone();
+                            conf.run_cache()
+                                .expect(&format!("Failed to create cache for {}", c.repo_name));
+                            return Arc::new(RwLock::new(conf));
+                        })
                         .collect(),
                     selected_row: 0,
                 };
